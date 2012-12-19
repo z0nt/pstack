@@ -32,6 +32,7 @@
 
 #include <dlfcn.h>
 #include <elf.h>
+#include <err.h>
 #include <libgen.h>
 #include <proc_service.h>
 #include <stdarg.h>
@@ -172,7 +173,11 @@ find_new_threads_callback(const td_thrhandle_t *th_p, void *data)
 	}
 
 	proc = data;
+#ifdef __LP64__
+	t = procReadThread(proc, gregset[0].r_rbp, gregset[0].r_rip);
+#else
 	t = procReadThread(proc, gregset[0].r_ebp, gregset[0].r_eip);
+#endif
 	if (t != NULL) {
 		t->id = ti.ti_tid;
 		if (ti.ti_state = TD_THR_RUN)

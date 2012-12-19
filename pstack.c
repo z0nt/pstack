@@ -49,9 +49,11 @@
 #include <sys/wait.h>
 
 #include <elf.h>
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <link.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -325,7 +327,11 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	 */
 	procGetRegs(proc, &regs);
 	/* Trace the active thread */
+#ifdef __LP64__
+	if ((t = procReadThread(proc, regs.r_rbp, regs.r_rip)) != NULL) {
+#else
 	if ((t = procReadThread(proc, regs.r_ebp, regs.r_eip)) != NULL) {
+#endif
 		t->id = -1;
 		t->running = 1;
 	}

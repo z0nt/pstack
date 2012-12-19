@@ -92,7 +92,7 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 	obj->elfHeader = eHdr = (const Elf_Ehdr *)data;
 	/* Validate the ELF header */
 	if (!IS_ELF(*obj->elfHeader) ||
-	    eHdr->e_ident[EI_CLASS] != ELFCLASS32 ||
+	    eHdr->e_ident[EI_CLASS] != ELF_TARG_CLASS ||
 	    eHdr->e_ident[EI_VERSION] != EV_CURRENT) {
 		warnx("not an ELF image");
 		free(obj);

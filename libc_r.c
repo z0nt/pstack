@@ -182,8 +182,13 @@ procReadLibcThreads(struct Process *proc)
 			bp = (Elf_Addr)ctx.sjb[0]._sjb[3];
 			break;
 		case CTX_UC:
+#ifdef __LP64__
+			ip = (Elf_Addr)ctx.uc.uc_mcontext.mc_rip;
+			bp = (Elf_Addr)ctx.uc.uc_mcontext.mc_rbp;
+#else
 			ip = (Elf_Addr)ctx.uc.uc_mcontext.mc_eip;
 			bp = (Elf_Addr)ctx.uc.uc_mcontext.mc_ebp;
+#endif
 			break;
 		default:
 			/* Don't know enough about thread to trace */
