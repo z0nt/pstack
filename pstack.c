@@ -583,7 +583,7 @@ procDumpStacks(FILE *file, struct Process *proc, int indent)
 		    padding, thread->id);
 		if (thread->running)
 			printf("(running) ");
-		fprintf(file, "-----------------\n", thread->id);
+		fprintf(file, "-----------------\n");
 		STAILQ_FOREACH(frame, &thread->stack, link) {
 			symName = fileName = "????????";
 			sym = NULL;
