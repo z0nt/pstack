@@ -57,7 +57,6 @@ struct thread_ops {
 };
 
 extern struct thread_ops thread_db_ops;
-extern int gVerbose;
 
 size_t	procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr,
 	    size_t size);

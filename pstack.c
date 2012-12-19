@@ -72,7 +72,7 @@ static int gNostop = 0;			/* number of arguments to print */
 static int gMaxFrames = 1024;		/* max number of frames to read */
 static int gDoTiming = 0;		/* Report time process was stopped */
 static int gShowObjectNames = 0;	/* show names of objects for each IP */
-int gVerbose = 0;
+static int gVerbose = 0;
 
 /* Amount of time process was suspended (if gDoTiming == 1) */
 static struct timeval gSuspendTime;
