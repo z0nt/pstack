@@ -49,6 +49,9 @@
 
 #include "elfinfo.h"
 
+#if __FreeBSD_version > 600000
+#define DT_COUNT	DT_BIND_NOW
+#endif
 static unsigned long	elf_hash(const unsigned char *name);
 
 /*
@@ -306,6 +309,47 @@ elfGetNote(struct ElfObject *obj, const char *name,
 				s += roundup2(note->n_namesz, 4);
 				data = s;
 				s += roundup2(note->n_descsz, 4);
+				if (strcmp(name, noteName) == 0 &&
+				    (note->n_type == type || type == -1)) {
+					*datap = data;
+					*lenp = note->n_descsz;
+					return (0);
+				}
+			}
+		}
+	}
+	return (-1);
+}
+
+/*
+ * Fetch the next "note" after the note whose data is pointed to by "datap".
+ */
+int
+elfGetNextNote(struct ElfObject *obj, const char *name,
+		u_int32_t type, const void **datap, int *lenp)
+{
+	const Elf_Phdr **phdr;
+	const Elf_Note *note;
+	const char *noteName, *data, *s, *e;
+	int found;
+
+	found = 0;
+	for (phdr = obj->programHeaders; *phdr; phdr++) {
+		if ((*phdr)->p_type == PT_NOTE) {
+			s = obj->fileData + (*phdr)->p_offset;
+			e = s + (*phdr)->p_filesz;
+			while (s < e) {
+				note = (const Elf_Note *)s;
+				s += sizeof(*note);
+				noteName = s;
+				s += roundup2(note->n_namesz, 4);
+				data = s;
+				s += roundup2(note->n_descsz, 4);
+				if (!found) {
+					if (data == *datap)
+						found = 1;
+					continue;
+				}
 				if (strcmp(name, noteName) == 0 &&
 				    (note->n_type == type || type == -1)) {
 					*datap = data;

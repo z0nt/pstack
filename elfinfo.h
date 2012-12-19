@@ -142,6 +142,8 @@ int	elfFindSymbolByName(struct ElfObject *o,
 int	elfLoadObject(const char *fileName, struct ElfObject **objp);
 int	elfGetNote(struct ElfObject *obj, const char *name,
 			u_int32_t type, const void **datap, int *lenp);
+int	elfGetNextNote(struct ElfObject *obj, const char *name,
+			u_int32_t type, const void **datap, int *lenp);
 int	elfGetImageFromCore(struct ElfObject *obj, const char **name);
 int	elfUnloadObject(struct ElfObject *obj);
 const char *elfGetAbiPrefix(struct ElfObject *o);

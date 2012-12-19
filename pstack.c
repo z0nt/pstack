@@ -45,17 +45,13 @@
 #include <sys/procfs.h>
 #include <sys/ptrace.h>
 #include <sys/queue.h>
-#include <sys/wait.h>
 #include <sys/time.h>
-#include <sys/ucontext.h>
+#include <sys/wait.h>
 
 #include <elf.h>
-#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <link.h>
-#include <setjmp.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,77 +59,7 @@
 #include <unistd.h>
 
 #include "elfinfo.h"
-
-/*
- * XXX: extracted from src/lib/libc_r/uthread/pthread_private.h
- */
-union ThreadContext {
-	jmp_buf		jb;
-	sigjmp_buf	sjb;
-	ucontext_t	uc;
-};
-
-enum CtxType {
-	CTX_JB_NOSIG, CTX_JB, CTX_SJB, CTX_UC
-};
-
-/* ... end pthread_private.h stuff */
-
-struct StackFrame {
-	STAILQ_ENTRY(StackFrame) link;
-	Elf_Addr	ip;
-	Elf_Addr	bp;
-	int		argCount;
-	Elf_Word	args[1];
-};
-
-STAILQ_HEAD(StackFrameList, StackFrame);
-
-struct Thread {
-	int running;
-	struct Thread		*next;
-	struct StackFrameList	stack;
-	Elf_Addr		id;
-};
-
-struct LibcInfo {
-	Elf_Addr	threadList;
-	Elf_Addr	threadRun;
-	int		offThreadNext;
-	int		offThreadState;
-	int		offThreadName;
-	int		offThreadCtxType;
-	int		offThreadCtx;
-	int		offUniqueId;
-};
-
-struct MappedPage {
-	const char *data;
-	Elf_Addr address; /* Valid only if data != NULL */
-	int lastAccess;
-};
-
-#define PAGECACHE_SIZE 4
-
-struct PageCache {
-	struct MappedPage pages[PAGECACHE_SIZE];
-	int 		accessGeneration;
-};
-
-struct Process {
-	pid_t		 pid;
-	int		 mem; /* File handle to /proc/<pid>/mem */
-	struct LibcInfo libcInfo;
-	int		 objectCount;
-	struct ElfObject *objectList;
-	struct ElfObject *execImage;
-	struct ElfObject *coreImage;
-	int		 threadCount;
-	int		 hasContextType;
-	struct Thread	*threadList;
-	const char	*abiPrefix;
-	struct PageCache pageCache;
-};
+#include "pstack.h"
 
 /*
  * Command-line flags
@@ -143,35 +69,35 @@ static int gNostop = 0;			/* number of arguments to print */
 static int gMaxFrames = 1024;		/* max number of frames to read */
 static int gDoTiming = 0;		/* Report time process was stopped */
 static int gShowObjectNames = 0;	/* show names of objects for each IP */
-static int gVerbose = 0;
+int gVerbose = 0;
 
 /* Amount of time process was suspended (if gDoTiming == 1) */
 static struct timeval gSuspendTime;
+
+static struct thread_ops *thread_ops[] = {
+#if __FreeBSD_version >= 600000
+	&thread_db_ops,
+#endif
+	&libc_r_ops,
+	NULL
+};
 
 static Elf_Addr	procFindRDebugAddr(struct Process *proc);
 
 static int	procOpen(pid_t pid, const char *exeName,
 			const char *coreFile, struct Process **procp);
-static int	procReadMem(struct Process *proc, void *ptr,
-			Elf_Addr remoteAddr, size_t size);
 static int	procFindObject(struct Process *proc, Elf_Addr addr,
 			struct ElfObject **objp);
 static int	procDumpStacks(FILE *file, struct Process *proc, int indent);
 static void	procAddElfObject(struct Process *proc,
 			struct ElfObject *obj, Elf_Addr base);
-static int	procReadVar(struct Process *proc,
-			struct ElfObject *obj, const char *name, int *value);
-static void	procGetLibcInfo(struct Process *proc, struct ElfObject *obj);
 static void	procFree(struct Process *proc);
 static void	procFreeThreads(struct Process *proc);
 static void	procFreeObjects(struct Process *proc);
 static void	procLoadSharedObjects(struct Process *proc);
-static void	procReadLibcThreads(struct Process *proc);
 static int	procGetRegs(struct Process *proc, struct reg *reg);
 static int	procSetupMem(struct Process *proc, pid_t pid, const char *core);
 static int	usage(void);
-static struct Thread *procReadThread(struct Process *proc, Elf_Addr bp,
-			Elf_Addr ip);
 
 int
 main(int argc, char **argv)
@@ -182,6 +108,7 @@ main(int argc, char **argv)
 	struct Process *proc;
 	pid_t pid;
 	struct ElfObject *dumpObj;
+	struct thread_ops **tdops;
 
 	while ((c = getopt(argc, argv, "a:d:e:f:hnoOs:tv")) != -1) {
 		switch (c) {
@@ -233,6 +160,11 @@ main(int argc, char **argv)
 	}
 	if (optind == argc)
 		return (usage());
+	tdops = thread_ops;
+	while (*tdops) {
+		(*tdops)->startup();
+		tdops++;
+	}
 	for (err = 0, i = optind; i < argc; i++) {
 		pid = atoi(argv[i]);
 		if (pid == 0 || (kill(pid, 0) == -1 && errno == ESRCH)) {
@@ -284,18 +216,15 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	char tmpBuf[PATH_MAX];
 	struct Process *proc;
 	struct reg regs;
-	struct LibcInfo *libc;
+	struct thread_ops **tdops;
 
 	proc = malloc(sizeof(*proc));
 	proc->objectList = NULL;
 	proc->threadList = NULL;
 	proc->objectCount = 0;
 	proc->coreImage = NULL;
-	proc->mem = -1;
 	proc->pid = -1;
-	libc = &proc->libcInfo;
-	libc->threadList = 0;
-	libc->threadRun = 0;
+	proc->threadOps = NULL;
 	/*
 	 * Get access to the address space via /proc, or the core image
 	 */
@@ -377,10 +306,19 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 			}
 		}
 	}
-	/* In case libc_r is statically linked */
-	procGetLibcInfo(proc, proc->execImage);
 	/* Attach any dynamically-linked libraries */
 	procLoadSharedObjects(proc);
+
+	/* See if we have any threads. */
+	tdops = thread_ops;
+	while (*tdops != NULL) {
+		if ((*tdops)->probe(proc)) {
+			proc->threadOps = *tdops;
+			break;
+		}
+		tdops++;
+	}
+
 	/*
 	 * Read the machine registers for the current stack and
 	 * instruction pointer
@@ -393,8 +331,8 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	}
 
 	/* If we know of more threads, trace those. */
-	if (proc->libcInfo.threadList)
-		procReadLibcThreads(proc);
+	if (proc->threadOps)
+		proc->threadOps->read_threads(proc);
 	if (pid != -1 && !gNostop) {
 		/* Resume the process */
 #ifndef KERN_35175_FIXED
@@ -418,8 +356,6 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 				gSuspendTime.tv_usec += 1000000;
 			}
 		}
-		close(proc->mem);
-		proc->mem = -1;
 	}
 	/* Success */
 	*procp = proc;
@@ -427,11 +363,33 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 }
 
 /*
+ * Write data to the target's address space.
+ */
+size_t
+procWriteMem(struct Process *proc, const void *ptr, Elf_Addr remoteAddr,
+    size_t size)
+{
+	struct ptrace_io_desc pio;
+
+	if (proc->pid == -1)
+		return (0);
+
+	pio.piod_op = PIOD_WRITE_D;
+	pio.piod_offs = (void *)remoteAddr;
+	pio.piod_addr = (void *)ptr;
+	pio.piod_len = size;
+	if (ptrace(PT_IO, proc->pid, (caddr_t)&pio, 0) < 0)
+		return (0);
+	return (pio.piod_len);
+}
+
+/*
  * Read data from the target's address space.
  */
-static int
+size_t
 procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr, size_t size)
 {
+	struct ptrace_io_desc pio;
 	int rc;
 	size_t fragSize, readLen;
 	const Elf_Phdr **hdr;
@@ -470,8 +428,12 @@ procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr, size_t size)
 				 * Page not found: read entire page into
 				 * least-recently used cache slot
 				 */
-				rc = pread(proc->mem, p, pagesize, pageLoc);
-				if (rc != pagesize) {
+				pio.piod_op = PIOD_READ_D;
+				pio.piod_offs = (void *)pageLoc;
+				pio.piod_addr = p;
+				pio.piod_len = pagesize;
+				if (ptrace(PT_IO, proc->pid, (caddr_t)&pio, 0) < 0 ||
+				    pio.piod_len != pagesize) {
 					free(p);
 					return (readLen);
 				}
@@ -519,7 +481,7 @@ procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr, size_t size)
  * Given the current ip and bp registers, read each stack frame, and add a
  * thread structure to the "threadList" of the process.
  */
-static struct Thread *
+struct Thread *
 procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip)
 {
 	int frameCount, i;
@@ -527,6 +489,13 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip)
 	const int frameSize = sizeof(*frame) + sizeof(Elf_Word) * gFrameArgs;
 	struct Thread *thread;
 
+	/* Check to see if we have already seen this thread. */
+	for (thread = proc->threadList; thread != NULL; thread = thread->next) {
+		frame = STAILQ_FIRST(&thread->stack);
+		if (frame->ip == ip && frame->bp == bp)
+			return (thread);
+	}
+	
 	thread = malloc(sizeof(struct Thread));
 	thread->running = 0;
 	STAILQ_INIT(&thread->stack);
@@ -658,7 +627,7 @@ procAddElfObject(struct Process *proc, struct ElfObject *obj, Elf_Addr base)
 /*
  * Read the value of the named symbol
  */
-static int
+int
 procReadVar(struct Process *proc, struct ElfObject *obj, const char *name,
 		int *value)
 {
@@ -670,31 +639,6 @@ procReadVar(struct Process *proc, struct ElfObject *obj, const char *name,
 		return (0);
 	}
 	return (-1);
-}
-
-/*
- * Try to find useful information from libc_r
- */
-static void
-procGetLibcInfo(struct Process *proc, struct ElfObject *obj)
-{
-	struct LibcInfo *lci = &proc->libcInfo;
-
-	if (lci->threadList != NULL) /* Already done? */
-		return;
-	if (procReadVar(proc, obj, "_thread_list", &lci->threadList) != 0)
-		return;
-	/* This appears to be libc_r: get the rest of the details we want */
-	procReadVar(proc, obj, "_thread_run", &lci->threadRun);
-	procReadVar(proc, obj, "_thread_state_offset", &lci->offThreadState);
-	procReadVar(proc, obj, "_thread_name_offset", &lci->offThreadName);
-	procReadVar(proc, obj, "_thread_next_offset", &lci->offThreadNext);
-	procReadVar(proc, obj, "_thread_uniqueid_offset", &lci->offUniqueId);
-	proc->hasContextType = procReadVar(proc, obj, "_thread_ctxtype_offset",
-	    &lci->offThreadCtxType) != -1;
-	if (gVerbose > 1 && proc->hasContextType == 0)
-	    warnx("post 4.7 threads library");
-	procReadVar(proc, obj, "_thread_ctx_offset", &lci->offThreadCtx);
 }
 
 /*
@@ -758,83 +702,6 @@ procLoadSharedObjects(struct Process *proc)
 		if (!loaded)
 			continue;
 		procAddElfObject(proc, obj, lAddr);
-		procGetLibcInfo(proc, obj);
-	}
-}
-
-/*
- * Grovel through libc_r's internals to find any threads.
- */
-static void
-procReadLibcThreads(struct Process *proc)
-{
-	struct Thread *t;
-	Elf_Addr ip, bp, thrPtr;
-	struct LibcInfo *libc = &proc->libcInfo;
-	union ThreadContext ctx;
-	enum CtxType ctxType;
-
-	for (thrPtr = libc->threadList; thrPtr; ) {
-		/*
-		 * We've already read the currently running thread from the
-		 * machine registers: If we see that thread on the _thread_list,
-		 * we ignore it.
-		 */
-		/*
-		 * If the threads library has a concept of a "context
-		 * type", (4.x, where x <= 7), we need to read it to
-		 * decide how to unwind, otherwise, we default to using
-		 * the jump buffer.
-		 */
-		if (proc->hasContextType) {
-		    if (procReadMem(proc, &ctxType,
-			thrPtr + libc->offThreadCtxType,
-			sizeof(ctxType)) != sizeof(ctxType)) {
-			    warnx("cannot read context type for "
-				"thread %p", thrPtr);
-			    goto next;
-		    }
-		} else {
-			ctxType = CTX_JB;
-		}
-		if (procReadMem(proc, &ctx, thrPtr +
-		    libc->offThreadCtx, sizeof(ctx)) != sizeof(ctx)) {
-			warnx("cannot read context for thread %p",
-			    thrPtr);
-			goto next;
-		}
-		switch (ctxType) {
-		case CTX_JB_NOSIG:
-		case CTX_JB:
-			ip = (Elf_Addr)ctx.jb[0]._jb[0];
-			bp = (Elf_Addr)ctx.jb[0]._jb[3];
-			break;
-		case CTX_SJB:
-			ip = (Elf_Addr)ctx.sjb[0]._sjb[0];
-			bp = (Elf_Addr)ctx.sjb[0]._sjb[3];
-			break;
-		case CTX_UC:
-			ip = (Elf_Addr)ctx.uc.uc_mcontext.mc_eip;
-			bp = (Elf_Addr)ctx.uc.uc_mcontext.mc_ebp;
-			break;
-		default:
-			/* Don't know enough about thread to trace */
-			warnx("cannot get frame for thread %p", thrPtr);
-			goto next;
-		}
-		if ((t = procReadThread(proc, bp, ip)) != NULL) {
-			procReadMem(proc, &proc->threadList->id,
-				thrPtr + libc->offUniqueId,
-				sizeof proc->threadList->id);
-			if (thrPtr == libc->threadRun)
-				t->running = 1;
-		}
-next:
-		if (procReadMem(proc, &thrPtr, thrPtr + libc->offThreadNext,
-		    sizeof(thrPtr)) != sizeof thrPtr) {
-			warnx("failed to read more threads");
-			break;
-		}
 	}
 }
 
@@ -873,21 +740,12 @@ static int
 procGetRegs(struct Process *proc, struct reg *reg)
 {
 	const prstatus_t *prstatus;
-	u_int32_t len;
-	char tmpBuf[64]; /* Used for /proc/%d/regs: 64 is more than sufficient */
-	int fd, rc;
+	int len, rc;
 
 	rc = -1;
 	if (proc->pid != -1) {
-		/* Read from process (from /proc/pid/regs) */
-		snprintf(tmpBuf, sizeof(tmpBuf), "/proc/%d/regs", proc->pid);
-		if ((fd = open(tmpBuf, O_RDONLY)) != -1) {
-			if ((len = read(fd, reg, sizeof *reg)) == sizeof *reg)
-				rc = 0;
-			else
-				warn("short read on registers");
-			close(fd);
-		}
+		if (ptrace(PT_GETREGS, proc->pid, (void *)reg, 0) == 0)
+			rc = 0;
 	} else {
 		/* Read from core file. */
 		if (!elfGetNote(proc->coreImage, "FreeBSD", NT_PRSTATUS,
@@ -905,24 +763,19 @@ procGetRegs(struct Process *proc, struct reg *reg)
 static int
 procSetupMem(struct Process *proc, pid_t pid, const char *core)
 {
-	char tmpBuf[64]; /* Used for /proc/%d/mem: 64 is more than sufficient */
 	int i;
 
 	if (core) {
 		if (!elfLoadObject(core, &proc->coreImage))
 			return (0);
 	} else if (pid != -1) {
-		snprintf(tmpBuf, sizeof(tmpBuf), "/proc/%d/mem", pid);
-		if ((proc->mem = open(tmpBuf, O_RDONLY)) != -1) {
-			proc->pid = pid;
-			for (i = 0; i < PAGECACHE_SIZE; i++) {
-				proc->pageCache.pages[i].lastAccess = 0;
-				proc->pageCache.pages[i].data = NULL;
-			}
-			proc->pageCache.accessGeneration = 0;
-			return (0);
+		proc->pid = pid;
+		for (i = 0; i < PAGECACHE_SIZE; i++) {
+			proc->pageCache.pages[i].lastAccess = 0;
+			proc->pageCache.pages[i].data = NULL;
 		}
-		warn("failed to open '%s'", tmpBuf);
+		proc->pageCache.accessGeneration = 0;
+		return (0);
 	} else {
 		warn("no core file or process id!");
 	}
@@ -937,13 +790,14 @@ procFree(struct Process *proc)
 {
 	size_t i;
 
+	if (proc->threadOps)
+		proc->threadOps->free(proc);
 	procFreeObjects(proc);
 	procFreeThreads(proc);
-	if (proc->mem != -1) {
+	if (proc->pid != -1) {
 		for (i = 0; i < PAGECACHE_SIZE; i++)
 			if (proc->pageCache.pages[i].data)
 				free((char *)proc->pageCache.pages[i].data);
-		close(proc->mem);
 	}
 	if (proc->coreImage)
 		elfUnloadObject(proc->coreImage);

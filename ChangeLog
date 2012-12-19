@@ -33,3 +33,11 @@
 
     Use "unique id" field in thread for thread-ids. More
     user-friendly than pthread_t pointers.
+
+1.2->1.3
+    Abstract thread operations to allow for multiple thread handlers.
+    Add a thread handler that uses libthread_db.so to fetch thread
+    information for use with multithreaded applications in 6.x and later.
+
+    Avoid displaying the current thread twice by using (IP, BP) as a unqiue
+    ID for threads.
