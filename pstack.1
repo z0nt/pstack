@@ -46,11 +46,6 @@ Specify an alternate executable to use for locating symbols in the
 process.  This is useful if the process was started from a stripped
 version of an executable, and you have the unstripped version
 available. If examining a corefile, this argument is required.
-.It Fl n
-Don't stop and resume the target process. This can confuse or crash
-.Nm
-if the stack changes as it is being read, but means that pstack has
-less of an effect (and chance to crash) the target process
 .It Fl o
 For each stack frame, display the name of the object in which the current
 function lies

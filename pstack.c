@@ -68,7 +68,6 @@
  * Command-line flags
  */
 static int gFrameArgs = 6;		/* number of arguments to print */
-static int gNostop = 0;			/* number of arguments to print */
 static int gMaxFrames = 1024;		/* max number of frames to read */
 static int gDoTiming = 0;		/* Report time process was stopped */
 static int gShowObjectNames = 0;	/* show names of objects for each IP */
@@ -110,7 +109,7 @@ main(int argc, char **argv)
 	struct ElfObject *dumpObj;
 	struct thread_ops **tdops;
 
-	while ((c = getopt(argc, argv, "a:d:e:f:hnoOs:tv")) != -1) {
+	while ((c = getopt(argc, argv, "a:d:e:f:hoOs:tv")) != -1) {
 		switch (c) {
 		case 'a':
 			gFrameArgs = atoi(optarg);
@@ -135,9 +134,6 @@ main(int argc, char **argv)
 		case 'h':
 			usage();
 			return 0;
-		case 'n':
-			gNostop = 1;
-			break;
 		case 'o':
 			gShowObjectNames = 1;
 			break;
@@ -290,32 +286,30 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	 * The less we do while the process is stopped, the better.
 	 */
 	if (pid != -1) {
-		if (!gNostop) {
-			if (gDoTiming)
-				gettimeofday(&start, 0);
-			if (ptrace(PT_ATTACH, pid, 0, 0) != 0) {
-				warn("failed to attach to process %d", pid);
-				procFree(proc);
-				return -1;
-			}
-			/*
-			 * Wait for child to stop.
-			 * XXX: Due to an interaction between ptrace() and linux
-			 * thread semantics, the "normal" waitpid may fail. We
-			 * do our best to guess when this happens, and try again
-			 * with options |= WLINUXCLONE
-			 */
-			if (waitpid(pid, &status, 0) == -1) {
+		if (gDoTiming)
+			gettimeofday(&start, 0);
+		if (ptrace(PT_ATTACH, pid, 0, 0) != 0) {
+			warn("failed to attach to process %d", pid);
+			procFree(proc);
+			return -1;
+		}
+		/*
+		 * Wait for child to stop.
+		 * XXX: Due to an interaction between ptrace() and linux
+		 * thread semantics, the "normal" waitpid may fail. We
+		 * do our best to guess when this happens, and try again
+		 * with options |= WLINUXCLONE
+		 */
+		if (waitpid(pid, &status, 0) == -1) {
 #ifndef MISC_39201_FIXED
-				if (errno != ECHILD ||
-				    waitpid(pid, &status, WLINUXCLONE) == -1)
-					warnx("(linux thread process detected:"
-					    " waiting with WLINUXCLONE)");
-				else
+			if (errno != ECHILD ||
+			    waitpid(pid, &status, WLINUXCLONE) == -1)
+				warnx("(linux thread process detected:"
+				    " waiting with WLINUXCLONE)");
+			else
 #endif
-					warn("can't wait for child: all bets "
-					    "are off");
-			}
+				warn("can't wait for child: all bets "
+				    "are off");
 		}
 	}
 	/* Attach any dynamically-linked libraries */
@@ -349,7 +343,7 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	/* If we know of more threads, trace those. */
 	if (proc->threadOps)
 		proc->threadOps->read_threads(proc);
-	if (pid != -1 && !gNostop) {
+	if (pid != -1) {
 		/* Resume the process */
 #ifndef KERN_35175_FIXED
 		/*
