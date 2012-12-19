@@ -65,27 +65,5 @@ verbose. Display debugging and diagnostics.
 Works for x86 32-bit ELF executables only for the moment. (ie, no
 a.out support, and no Alpha support).
 It is also very dependent on the current FreeBSD threads implementation. 
-.Pp
-Because of a bug in
-.Xr ptrace 2
-,
-.Nm
-needs to send the target process a SIGCONT to re-awaken it.  This
-is not normally an issue, but may cause problems for some processes
-that catch SIGCONT, and use it in non-obvious ways.
-A fix for the FreeBSD ptrace() interface is available from the
-FreeBSD PR database, in kern/35175. Adding "-DKERN_35175_FIXED" to CFLAGS when
-compiling
-.Nm
-will stop it sending the SIGCONT its targets.
-.Pp
-Because of a non-obvious interaction between wait(), ptrace() and
-processes started with rfork(RFLINUXTHPN), there's some hackery
-involved in detecting that the child process has been stopped
-successfully by
-.Nm
-Adding "-DMISC_39201_FIXED" to CFLAGS when compiling
-.Nm
-removes the associated hackery.
 .Sh AUTHORS
 Peter Edwards <pmedwards@eircom.net>

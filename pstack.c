@@ -293,24 +293,8 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 			procFree(proc);
 			return -1;
 		}
-		/*
-		 * Wait for child to stop.
-		 * XXX: Due to an interaction between ptrace() and linux
-		 * thread semantics, the "normal" waitpid may fail. We
-		 * do our best to guess when this happens, and try again
-		 * with options |= WLINUXCLONE
-		 */
-		if (waitpid(pid, &status, 0) == -1) {
-#ifndef MISC_39201_FIXED
-			if (errno != ECHILD ||
-			    waitpid(pid, &status, WLINUXCLONE) == -1)
-				warnx("(linux thread process detected:"
-				    " waiting with WLINUXCLONE)");
-			else
-#endif
-				warn("can't wait for child: all bets "
-				    "are off");
-		}
+		if (waitpid(pid, &status, 0) == -1)
+			err(1, "failed in waitpid");
 	}
 	/* Attach any dynamically-linked libraries */
 	procLoadSharedObjects(proc);
@@ -345,18 +329,8 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 		proc->threadOps->read_threads(proc);
 	if (pid != -1) {
 		/* Resume the process */
-#ifndef KERN_35175_FIXED
-		/*
-		 * XXX: We should be able to do this with the
-		 * PT_DETACH, but PT_DETACH doesn't clean up the child
-		 * properly, and the STOP signal that was used to stop the
-		 * child ends up being delivered after the process is
-		 * continued. See PR kern/35175 for a more complete description
-		 * and a patch.
-		 */
-		kill(pid, SIGCONT);
-#endif
-		rc = ptrace(PT_DETACH, pid, (caddr_t)1, 0);
+		if (ptrace(PT_DETACH, pid, (caddr_t)1, 0) != 0)
+			warn("failed to detach from process %d", pid);
 		if (gDoTiming) {
 			gettimeofday(&end, 0);
 			gSuspendTime.tv_sec = end.tv_sec - start.tv_sec;
