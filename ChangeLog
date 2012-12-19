@@ -1,0 +1,35 @@
+1.0->1.1
+
+    Use "/proc/regs" instead of pstack to get register info. This
+    allows us to avoid calls to ptrace() altogether (with the new
+    "-n" flag), to avoid interfering with the target process at
+    all, with the caveat that a change in the stack while reading
+    it may cause pstack to crash.
+
+    Attempt to waitpid with the WLINUXCLONE flag if the first wait
+    fails: this allows pstack to suspend linux pthread processes
+    correctly. (see PR 39201)
+
+    Fix problem when stack addresses point into the first page of
+    memory, confusing the cache into thinking it had already read
+    that data.
+
+1.1->1.2
+    Cope with changes in 4.7-STABLE threads library: There's no
+    longer a context "type" for a thread: all contexts come from a
+    jump buffer. The code was not handling the lack of this type
+    particulary gracefully, and would spin on a 4.7-STABLE box.
+
+    Don't try to ignore the current thread in the uthread list.
+    The conceptual backtrace of the current thread can be different
+    to what the actual executing code is. (ie, the thread scheduler
+    can be executing as the "current thread", but with a different
+    stack to the application's concept of thread)
+
+    Include BP as well as IP in stack traceback when in verbose
+    mode.
+
+    "-v" implies "-o" (or -O if -o is already in effect)
+
+    Use "unique id" field in thread for thread-ids. More
+    user-friendly than pthread_t pointers.
