@@ -44,6 +44,7 @@
 #include <sys/types.h>
 #include <sys/procfs.h>
 #include <sys/ptrace.h>
+#include <sys/sysctl.h>
 #include <sys/queue.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -228,7 +229,7 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	proc->pid = -1;
 	proc->threadOps = NULL;
 	/*
-	 * Get access to the address space via /proc, or the core image
+	 * Prepare Process data structure
 	 */
 	if (procSetupMem(proc, pid, coreFile) != 0) {
 		procFree(proc);
@@ -236,7 +237,7 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	}
 	/*
 	 * Fixup the executable name (if not specified, get from the core
-	 * file, or /proc)
+	 * file, or from sysctl)
 	 */
 	if (!exeName) {
 		if (proc->coreImage) {
@@ -247,8 +248,20 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 				return (-1);
 			}
 		} else {
-			snprintf(tmpBuf, sizeof(tmpBuf), "/proc/%d/file",
-			    proc->pid);
+			int name[4];
+			size_t len;
+
+			name[0] = CTL_KERN;
+			name[1] = KERN_PROC;
+			name[2] = KERN_PROC_PATHNAME;
+			name[3] = proc->pid;
+
+			len = sizeof(tmpBuf);
+			if (sysctl(name, 4, &tmpBuf, &len, NULL, 0) == -1) {
+				warn("sysctl: kern.proc.pathname: %d", proc->pid);
+				procFree(proc);
+				return (-1);
+			}
 			exeName = tmpBuf;
 		}
 	}
@@ -262,7 +275,7 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	/* Work out the ABI for this executable */
 	proc->abiPrefix = elfGetAbiPrefix(proc->execImage);
 	/*
-	 * If we got the executable name from /proc, read the symlink for
+	 * If we got the executable name from sysctl, read the symlink for
 	 * prettyness. (We do this _after_ the opening of the object, in case
 	 * the file has moved before we needed to open it)
 	 */
