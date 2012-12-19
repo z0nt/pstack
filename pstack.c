@@ -78,9 +78,7 @@ int gVerbose = 0;
 static struct timeval gSuspendTime;
 
 static struct thread_ops *thread_ops[] = {
-#if __FreeBSD_version >= 600000
 	&thread_db_ops,
-#endif
 	NULL
 };
 

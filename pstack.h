@@ -56,9 +56,7 @@ struct thread_ops {
 	void		(*free)(struct Process *);
 };
 
-#if __FreeBSD_version >= 600000
 extern struct thread_ops thread_db_ops;
-#endif
 extern int gVerbose;
 
 size_t	procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr,

@@ -49,9 +49,6 @@
 
 #include "elfinfo.h"
 
-#if __FreeBSD_version > 600000
-#define DT_COUNT	DT_BIND_NOW
-#endif
 static unsigned long	elf_hash(const unsigned char *name);
 
 /*
@@ -657,7 +654,7 @@ elfDumpDynamic(FILE *f, const Elf_Dyn *dyn, int indent)
 	};
 
 	fprintf(f, "%stag: %d (%s)\n", padding, dyn->d_tag,
-	    dyn->d_tag >= 0 && dyn->d_tag <= DT_COUNT ?
+	    dyn->d_tag >= 0 && dyn->d_tag <= DT_BIND_NOW ?
 	    tagNames[dyn->d_tag] : "(unknown)");
 	fprintf(f, "%sword/addr: %d (%x)\n",
 	    padding, dyn->d_un.d_val, dyn->d_un.d_val);
