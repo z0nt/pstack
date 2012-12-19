@@ -131,8 +131,6 @@ thread_db_probe(struct Process *proc)
 		base = basename(obj->fileName);
 		if (base == NULL)
 			continue;
-		if (strcmp(base, "libc_r.so.4") == 0)
-			return (0);
 	}	
 	
 	info = malloc(sizeof(struct thread_db_info));

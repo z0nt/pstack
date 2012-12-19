@@ -56,7 +56,6 @@ struct thread_ops {
 	void		(*free)(struct Process *);
 };
 
-extern struct thread_ops libc_r_ops;
 #if __FreeBSD_version >= 600000
 extern struct thread_ops thread_db_ops;
 #endif

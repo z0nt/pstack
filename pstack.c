@@ -81,7 +81,6 @@ static struct thread_ops *thread_ops[] = {
 #if __FreeBSD_version >= 600000
 	&thread_db_ops,
 #endif
-	&libc_r_ops,
 	NULL
 };
 
