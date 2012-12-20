@@ -178,7 +178,7 @@ find_new_threads_callback(const td_thrhandle_t *th_p, void *data)
 #endif
 	if (t != NULL) {
 		t->id = ti.ti_tid;
-		if (ti.ti_state = TD_THR_RUN)
+		if (ti.ti_state == TD_THR_RUN)
 			t->running = 1;
 	}
 	return 0;
