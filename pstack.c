@@ -176,7 +176,7 @@ main(int argc, char **argv)
 			procFree(proc);
 			if (gDoTiming)
 				fprintf(stderr,
-				    "suspended for %ld.%06ld secs\n",
+				    "suspended for %zd.%06ld secs\n",
 				    gSuspendTime.tv_sec, gSuspendTime.tv_usec);
 		} else {
 			err = EX_OSERR;
@@ -570,9 +570,9 @@ procDumpStacks(FILE *file, struct Process *proc, int indent)
 				    frame->ip - obj->baseAddr, STT_FUNC, &sym,
 				    &symName);
 			}
-			fprintf(file, "%s%p ", padding - 1, frame->ip);
+			fprintf(file, "%s%zu ", padding - 1, frame->ip);
 			if (gVerbose) /* Show ebp for verbose */
-			    fprintf(file, "%p ", frame->bp);
+			    fprintf(file, "%zu ", frame->bp);
 			fprintf(file, "%s (", symName);
 			if (frame->argCount) {
 				for (i = 0; i < frame->argCount - 1; i++)
@@ -581,7 +581,7 @@ procDumpStacks(FILE *file, struct Process *proc, int indent)
 			}
 			fprintf(file, ")");
 			if (obj && sym != NULL)
-				printf(" + %x", frame->ip - obj->baseAddr -
+				printf(" + %zx", frame->ip - obj->baseAddr -
 				    sym->st_value);
 			if (obj && gShowObjectNames) {
 				printf(" in %s",
@@ -607,7 +607,7 @@ procAddElfObject(struct Process *proc, struct ElfObject *obj, Elf_Addr base)
 	proc->objectList = obj;
 	proc->objectCount++;
 	if (gVerbose)
-		warnx("object loaded: %s @ %p", obj->fileName, base);
+		warnx("object loaded: %s @ %zu", obj->fileName, base);
 }
 
 /*
@@ -658,7 +658,7 @@ procLoadSharedObjects(struct Process *proc)
 	    mapAddr = (Elf_Addr)map.l_next) {
 		if (procReadMem(proc, &map, mapAddr, sizeof(map))
 		    != sizeof (map)) {
-			warnx("cannot read link_map @ %p", mapAddr);
+			warnx("cannot read link_map @ %zu", mapAddr);
 			break;
 		}
 		/* Read the path to the file */

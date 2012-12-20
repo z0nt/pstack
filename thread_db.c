@@ -165,7 +165,7 @@ find_new_threads_callback(const td_thrhandle_t *th_p, void *data)
 
 	err = td_thr_getgregs_p(th_p, gregset);
 	if (err != TD_OK) {
-		warnx("Cannot fetch registers for thread %d: %d", ti.ti_tid,
+		warnx("Cannot fetch registers for thread %ld: %d", ti.ti_tid,
 		    err);
 		return (0);
 	}

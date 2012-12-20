@@ -474,10 +474,10 @@ elfDumpSection(FILE *f, struct ElfObject *obj, const Elf_Shdr *hdr,
 
 	fprintf(f, "%sname= %s\n"
 	    "%stype= %d (%s)\n"
-	    "%sflags= %xH (%s%s%s)\n"
-	    "%saddress= %xH\n"
-	    "%soffset= %d (%xH)\n"
-	    "%ssize= %d (%xH)\n"
+	    "%sflags= %zxH (%s%s%s)\n"
+	    "%saddress= %zxH\n"
+	    "%soffset= %zu (%zxH)\n"
+	    "%ssize= %zu (%zxH)\n"
 	    "%slink= %d (%xH)\n"
 	    "%sinfo= %d (%xH)\n" ,
 	    padding, obj->sectionStrings + hdr->sh_name,
@@ -530,13 +530,13 @@ elfDumpProgramSegment(FILE *f, struct ElfObject *obj, const Elf_Phdr *hdr,
 	};
 
 	fprintf(f, "%stype = %xH (%s)\n"
-	    "%soffset = %xH (%d)\n"
-	    "%svirtual address = %xH (%d)\n"
-	    "%sphysical address = %xH (%d)\n"
-	    "%sfile size = %xH (%d)\n"
-	    "%smemory size = %xH (%d)\n"
+	    "%soffset = %zxH (%zu)\n"
+	    "%svirtual address = %zxH (%zu)\n"
+	    "%sphysical address = %zxH (%zu)\n"
+	    "%sfile size = %zxH (%zu)\n"
+	    "%smemory size = %zxH (%zu)\n"
 	    "%sflags = %xH (%s %s %s)\n"
-	    "%salignment = %xH (%d)\n",
+	    "%salignment = %zxH (%zu)\n",
 	    padding, hdr->p_type,
 	    hdr->p_type <= PT_PHDR ? segmentTypeNames[hdr->p_type] : "unknown",
 	    padding, hdr->p_offset, hdr->p_offset,
@@ -600,8 +600,8 @@ elfDumpSymbol(FILE *f, const Elf_Sym * sym, const char *strings, int indent)
 
 	fprintf(f,
 	    "%sname = %s\n"
-	    "%svalue = %d (%xH)\n"
-	    "%ssize = %d (%xH)\n"
+	    "%svalue = %zu (%zxH)\n"
+	    "%ssize = %zu (%zxH)\n"
 	    "%sinfo = %d (%xH)\n"
 	    "%sbinding = %s\n"
 	    "%stype = %s\n"
@@ -653,10 +653,10 @@ elfDumpDynamic(FILE *f, const Elf_Dyn *dyn, int indent)
 	    "DT_BIND_NOW"
 	};
 
-	fprintf(f, "%stag: %d (%s)\n", padding, dyn->d_tag,
+	fprintf(f, "%stag: %zd (%s)\n", padding, dyn->d_tag,
 	    dyn->d_tag >= 0 && dyn->d_tag <= DT_BIND_NOW ?
 	    tagNames[dyn->d_tag] : "(unknown)");
-	fprintf(f, "%sword/addr: %d (%x)\n",
+	fprintf(f, "%sword/addr: %zu (%zx)\n",
 	    padding, dyn->d_un.d_val, dyn->d_un.d_val);
 }
 
@@ -696,7 +696,7 @@ elfDumpObject(FILE *f, struct ElfObject *obj, int snaplen, int indent)
 
 	brand = ehdr->e_ident[EI_OSABI];
 	fprintf(f, "%sType= %s\n", padding, typeNames[ehdr->e_type]);
-	fprintf(f, "%sEntrypoint= %x\n", padding, ehdr->e_entry);
+	fprintf(f, "%sEntrypoint= %zx\n", padding, ehdr->e_entry);
 	fprintf(f, "%sExetype= %d (%s)\n", padding, brand,
 		brand >= 0  && brand <= ELFOSABI_OPENBSD ?
 		abiNames[brand] : "unknown");
