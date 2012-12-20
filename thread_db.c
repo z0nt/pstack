@@ -231,8 +231,7 @@ ps_pglobal_lookup(struct ps_prochandle *ph, const char *objname,
 	obj = ph->proc->objectList;
 	while (obj != NULL) {
 		if (elfFindSymbolByName(obj, name, &sym) == 0) {
-			*sym_addr = (void *)(uintptr_t)
-			    (obj->baseAddr + sym->st_value);
+			*sym_addr = (uintptr_t)(obj->baseAddr + sym->st_value);
 			return (PS_OK);
 		}
 		obj = obj->next;
