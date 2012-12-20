@@ -295,6 +295,8 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 		}
 		if (waitpid(pid, &status, 0) == -1)
 			err(1, "failed in waitpid");
+		if (!WIFSTOPPED(status))
+			err(1, "cannot stop process %d", pid);
 	}
 	/* Attach any dynamically-linked libraries */
 	procLoadSharedObjects(proc);
