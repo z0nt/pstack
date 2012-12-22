@@ -49,7 +49,7 @@
 
 #include "elfinfo.h"
 
-static unsigned long	elf_hash(const unsigned char *name);
+static unsigned long	elf_hash(const char *name);
 
 /*
  * Parse out an ELF file into an ElfObject structure.
@@ -60,7 +60,7 @@ int
 elfLoadObject(const char *fileName, struct ElfObject **objp)
 {
 	int file, i;
-	const unsigned char *p;
+	const char *p;
 	struct ElfObject *obj;
 	struct stat sb;
 	const Elf_Ehdr *eHdr;
@@ -368,7 +368,7 @@ int
 elfGetImageFromCore(struct ElfObject *obj, const char **name)
 {
 	const prpsinfo_t *psinfo;
-	u_int32_t len;
+	int len;
 
 	if (!elfGetNote(obj, "FreeBSD", NT_PRPSINFO,
 	    (const void **)&psinfo, &len) &&
@@ -402,7 +402,7 @@ elfGetAbiPrefix(struct ElfObject *obj)
 	for (i = 0; knownABIs[i].brand != -1; i++) {
 		if (knownABIs[i].brand == obj->elfHeader->e_ident[EI_OSABI] ||
 		    strcmp(knownABIs[i].oldBrand,
-		    obj->elfHeader->e_ident + OLD_EI_BRAND) == 0)
+		    (const char *)obj->elfHeader->e_ident + OLD_EI_BRAND) == 0)
 			return knownABIs[i].prefix;
 	}
 	/* ... Then the interpreter */
@@ -434,7 +434,7 @@ elfUnloadObject(struct ElfObject *obj)
 /*
  * Culled from System V Application Binary Interface
  */
-static unsigned long elf_hash(const unsigned char *name)
+static unsigned long elf_hash(const char *name)
 {
 	unsigned long h = 0, g;
 
