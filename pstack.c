@@ -570,9 +570,9 @@ procDumpStacks(FILE *file, struct Process *proc, int indent)
 				    frame->ip - obj->baseAddr, STT_FUNC, &sym,
 				    &symName);
 			}
-			fprintf(file, "%s%zu ", padding - 1, frame->ip);
+			fprintf(file, "%s%#*zx ", padding - 1, 11, frame->ip);
 			if (gVerbose) /* Show ebp for verbose */
-			    fprintf(file, "%zu ", frame->bp);
+			    fprintf(file, "0x%zx ", frame->bp);
 			fprintf(file, "%s (", symName);
 			if (frame->argCount) {
 				for (i = 0; i < frame->argCount - 1; i++)
