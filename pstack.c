@@ -376,7 +376,7 @@ size_t
 procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr, size_t size)
 {
 	struct ptrace_io_desc pio;
-	int rc;
+	int rc, err;
 	size_t fragSize, readLen;
 	const Elf_Phdr **hdr;
 	const char *data;
@@ -418,8 +418,12 @@ procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr, size_t size)
 				pio.piod_offs = (void *)pageLoc;
 				pio.piod_addr = p;
 				pio.piod_len = pagesize;
-				if (ptrace(PT_IO, proc->pid, (caddr_t)&pio, 0) < 0 ||
-				    pio.piod_len != pagesize) {
+				errno = 0;
+				err = ptrace(PT_IO, proc->pid, (caddr_t)&pio, 0);
+				if (err < 0 || pio.piod_len != pagesize) {
+					if (gVerbose)
+						warnx("ptrace_read err(%d): %s for address 0x%lx",
+						    err, strerror(errno), pageLoc);
 					free(p);
 					return (readLen);
 				}
@@ -603,11 +607,13 @@ static void
 procAddElfObject(struct Process *proc, struct ElfObject *obj, Elf_Addr base)
 {
 	obj->next = proc->objectList;
-	obj->baseAddr = base;
+	if (base > 0)
+		obj->baseAddr = base;
+
 	proc->objectList = obj;
 	proc->objectCount++;
 	if (gVerbose)
-		warnx("object loaded: %s @ %zu", obj->fileName, base);
+		warnx("object loaded: %s @ 0x%lx", obj->fileName, obj->baseAddr);
 }
 
 /*
@@ -711,7 +717,7 @@ procFindRDebugAddr(struct Process *proc)
 			    obj->dynamic->p_offset + dyn);
 			if (dynp->d_tag == DT_DEBUG &&
 			    procReadMem(proc, &dyno,
-			    obj->dynamic->p_vaddr + dyn, sizeof(dyno)) ==
+			    obj->dynamic->p_vaddr + dyn + obj->baseAddr, sizeof(dyno)) ==
 			    sizeof (dyno))
 				return(dyno.d_un.d_ptr);
 		}

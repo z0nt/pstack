@@ -98,6 +98,7 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 	}
 	obj->programHeaders = pHdrs =
 	    malloc(sizeof(Elf_Phdr *) * (eHdr->e_phnum + 1));
+	obj->baseAddr = 0;
 	for (p = data + eHdr->e_phoff, i = 0; i < eHdr->e_phnum; i++) {
 		pHdrs[i] = (const Elf_Phdr *)p;
 		switch (pHdrs[i]->p_type) {
@@ -107,6 +108,13 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 		case PT_DYNAMIC:
 			obj->dynamic = pHdrs[i];
 			break;
+		/*
+		 * Check program headers for load address. If it's ZERO, then
+		 * kernel will load object in ET_DYN_LOAD_ADDRESS
+		 */
+		case PT_LOAD:
+			if (pHdrs[i]->p_paddr == 0 && pHdrs[i]->p_vaddr == 0)
+				obj->baseAddr = ET_DYN_LOAD_ADDR;
 		}
 		p += eHdr->e_phentsize;
 	}
