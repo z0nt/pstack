@@ -175,9 +175,9 @@ find_new_threads_callback(const td_thrhandle_t *th_p, void *data)
 
 	proc = data;
 #ifdef __LP64__
-	t = procReadThread(proc, gregset[0].r_rbp, gregset[0].r_rip);
+	t = procReadThread(proc, gregset[0].r_rbp, gregset[0].r_rip, gregset[0].r_rsp);
 #else
-	t = procReadThread(proc, gregset[0].r_ebp, gregset[0].r_eip);
+	t = procReadThread(proc, gregset[0].r_ebp, gregset[0].r_eip, gregset[0].r_esp);
 #endif
 	if (t != NULL) {
 		t->id = ti.ti_tid;

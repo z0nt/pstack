@@ -61,7 +61,10 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#include <libelftc.h>
+
 #include "elfinfo.h"
+#include "eh.h"
 #include "pstack.h"
 
 /*
@@ -90,6 +93,8 @@ static int	procOpen(pid_t pid, const char *exeName,
 static int	procFindObject(struct Process *proc, Elf_Addr addr,
 			struct ElfObject **objp);
 static int	procDumpStacks(FILE *file, struct Process *proc, int indent);
+static void	procDumpThreadStacks(FILE *file, struct Process *proc,
+		    struct Thread *thread, int indent);
 static void	procAddElfObject(struct Process *proc,
 			struct ElfObject *obj, Elf_Addr base);
 static void	procFree(struct Process *proc);
@@ -98,6 +103,7 @@ static void	procFreeObjects(struct Process *proc);
 static void	procLoadSharedObjects(struct Process *proc);
 static int	procGetRegs(struct Process *proc, struct reg *reg);
 static int	procSetupMem(struct Process *proc, pid_t pid, const char *core);
+
 static int	usage(void);
 
 int
@@ -334,9 +340,9 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	procGetRegs(proc, &regs);
 	/* Trace the active thread */
 #ifdef __LP64__
-	if ((t = procReadThread(proc, regs.r_rbp, regs.r_rip)) != NULL) {
+	if ((t = procReadThread(proc, regs.r_rbp, regs.r_rip, regs.r_rsp)) != NULL) {
 #else
-	if ((t = procReadThread(proc, regs.r_ebp, regs.r_eip)) != NULL) {
+	if ((t = procReadThread(proc, regs.r_ebp, regs.r_eip, regs.r_esp)) != NULL) {
 #endif
 		t->id = -1;
 		t->running = 1;
@@ -488,22 +494,56 @@ procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr, size_t size)
  * thread structure to the "threadList" of the process.
  */
 struct Thread *
-procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip)
+procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 {
 	int frameCount, i;
 	struct StackFrame *frame;
 	const int frameSize = sizeof(*frame) + sizeof(Elf_Word) * gFrameArgs;
 	struct Thread *thread;
 
+	int			 pos;
+	int32_t			 rel_ip;
+	struct ElfObject	*objp;
+	int32_t			 ip_offset;
+	struct eh_cfa_state	*rules;
+
 	/* Check to see if we have already seen this thread. */
 	for (thread = proc->threadList; thread != NULL; thread = thread->next) {
 		frame = STAILQ_FIRST(&thread->stack);
-		if (frame->ip == ip && frame->bp == bp)
+		if (frame->ip == ip && frame->sp == sp)
 			return (thread);
 	}
-	
+
+	/*
+	 * There are 2 options: initial frame is frame pointer optimized or not.
+	 * If FPO, then if there is EH in object file, we can find CFA and
+	 * virtual BP. If there is no EH, assume no frame pointer optimization
+	 */
+
+	if (procFindObject(proc, ip, &objp) == 0) {
+		rules = malloc(sizeof(struct eh_cfa_state));
+		if(rules == NULL) {
+			abort();
+		}
+		memset(rules, 0, sizeof(struct eh_cfa_state));
+		rules->target_ip = ip - objp->baseAddr;
+		rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
+
+		if (ehLookupFrame(objp->ehframeHeader, objp->fileData, rules) == 0) {
+			if(rules->cfareg == 7)
+			{
+				ehPrintRules(rules);
+				bp = sp + rules->cfaoffset + (2 * rules->data_aligment);
+			}
+		}
+		free(rules);
+	} else {
+		warnx("jitted code: ip = 0x%lx sp = 0x%lx bp = 0x%lx", ip, sp, bp);	//TODO: ???
+	}
+
 	thread = malloc(sizeof(struct Thread));
 	thread->running = 0;
+	ip_offset = sizeof(bp);
 	STAILQ_INIT(&thread->stack);
 	/* Put a bound on the number of iterations. */
 	for (frameCount = 0; frameCount < gMaxFrames; frameCount++) {
@@ -511,6 +551,9 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip)
 		/* Store this frame, and its args in the Thread */
 		frame->ip = ip;
 		frame->bp = bp;
+		frame->sp = sp;
+		printf("frame: 0x%lx 0x%lx 0x%d\n", ip, bp, ip_offset);
+		frame->broken = 0;
 		STAILQ_INSERT_TAIL(&thread->stack, frame, link);
 		for (i = 0; i < gFrameArgs; i++)
 			if (procReadMem(proc, &frame->args[i],
@@ -519,11 +562,90 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip)
 				break;
 		frame->argCount = i;
 		/* Read the next frame */
-		if (procReadMem(proc, &ip, bp + sizeof(bp), sizeof(ip))
-		    != sizeof(ip) || ip == 0 ||
-		    procReadMem(proc, &bp, bp, sizeof(bp)) != sizeof(bp) ||
-		    bp <= frame->bp)
+		if (procReadMem(proc, &ip, bp + ip_offset, sizeof(ip)) != sizeof(ip)) {
+			frame->broken = '!';
 			break;
+		}
+
+		if (procReadMem(proc, &bp, bp, sizeof(bp)) != sizeof(bp)) {
+			frame->broken = '?';
+			break;
+		}
+
+		if (ip == 0) {
+			frame->broken = '.';
+			procDumpThreadStacks(stdout, proc, thread, 4);
+			break;
+		}
+
+		rules = NULL;
+		/*
+		 * Let's suppose FPO optimization. Try to find object
+		 * of last known frame and look for eh_frame_hdr info.
+		 */
+
+		if (procFindObject(proc, ip, &objp) != 0) {
+			warnx("??? jitted code ??? frame %d: 0x%lx, prev - 0x%lx, sp - 0x%lx, bp - 0x%lx", frameCount, ip, frame->ip, frame->sp, frame->bp);
+			goto fpo_fail;
+		}
+
+		rules = malloc(sizeof(struct eh_cfa_state));
+		if(rules == NULL) {
+			goto fpo_fail;
+		}
+
+		memset(rules, 0, sizeof(struct eh_cfa_state));
+		rules->target_ip = ip - objp->baseAddr;
+		rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
+
+//		printf("ehLookup: IP 0x%x 0x%lx (file %s at %p), "
+//		    "EH(ip: %d, hdr: %p)\n",
+//		    rules->target_ip, frame->bp, objp->fileName, objp->fileData,
+//		    rules->eh_rel_ip, objp->ehframeHeader);
+
+		if (ehLookupFrame(objp->ehframeHeader, objp->fileData, rules) != 0) {
+			goto fpo_fail;
+		}
+
+		// BP register has number 6
+		if(rules->cfareg == 6) {
+			// BP is present, no error
+			goto fpo_fail;
+		}
+
+		// not SP - error
+		if(rules->cfareg != 7)
+		{
+			warnx("CFAREG not SP offset: 0%x 0x%lx / 0x%x (%s)", rules->cfareg, ip, rules->target_ip, objp->fileName);
+			ehPrintRules(rules);
+			goto fpo_fail;
+		}
+
+		/*
+		 * We need more love for this place. If previous frame
+		 * is BP-supplied, so our SP is previous BP + 2 and CFA
+		 * is previous BP + 2 + cfaoffset. :et's imagine that we're
+		 * also BP-supplied, so our frame pointer is CFA-2, i.e.
+		 * previous BP + cfaoffset. Return address is CFA + RA shift,
+		 * i.e. our frame pointer + 2 + RA shift
+		 */
+		bp = frame->bp + rules->cfaoffset;
+		ip_offset = rules->reg[0x10] - (2 * rules->data_aligment);
+
+		if(rules != NULL)
+			free(rules);
+		frame->broken = 0;
+		continue;
+fpo_fail:
+		if(rules != NULL)
+			free(rules);
+
+		if ((bp <= frame->bp) || ((bp - frame->bp) > 0x100000)){
+			frame->broken = '*';
+			break;
+		}
+
+		ip_offset = sizeof(bp);
 	}
 	thread->next = proc->threadList;
 	proc->threadList = thread;
@@ -554,18 +676,76 @@ procFindObject(struct Process *proc, Elf_Addr addr, struct ElfObject **objp)
 	return (-1);
 }
 
+static void
+procDumpThreadStacks(FILE *file, struct Process *proc, struct Thread *thread, int indent)
+{
+	struct StackFrame	*frame;
+	struct ElfObject	*obj;
+	const Elf_Sym		*sym;
+	const char		*padding, *fileName, *symName, *p;
+	int			 i;
+	char 			 buf[1024];
+
+	if (gThreadID != -1 && gThreadID != thread->id)
+		return;
+
+	padding = pad(indent);
+
+	fprintf(file, "%s----------------- thread %d ",
+	    padding, thread->id);
+	if (thread->running)
+		printf("(running) ");
+	fprintf(file, "-----------------\n");
+	STAILQ_FOREACH(frame, &thread->stack, link) {
+		symName = fileName = "????????";
+		sym = NULL;
+		obj = NULL;
+		if (procFindObject(proc, frame->ip, &obj) == 0) {
+			fileName = obj->fileName;
+			//TODO: batch frame for same object
+			elfFindSymbolByAddress(obj,
+			    frame->ip - obj->baseAddr, STT_FUNC, &sym,
+			    &symName);
+			if(elftc_demangle(symName, buf, sizeof(buf), 0) == 0)
+				symName = buf;
+		}
+		if (frame->broken != 0)
+			fprintf(file, "%c", frame->broken);
+		fprintf(file, "%s%#*zx ", padding - 1, 11, frame->ip);
+		if (gVerbose) /* Show ebp for verbose */
+		    fprintf(file, "0x%zx ", frame->bp);
+		fprintf(file, "%s (", symName);
+		if (frame->argCount) {
+			for (i = 0; i < frame->argCount - 1; i++)
+				fprintf(file, "%x, ", frame->args[i]);
+			fprintf(file, "%x", frame->args[i]);
+		}
+		fprintf(file, ")");
+
+		if (obj && sym != NULL)
+			fprintf(file, " + %zx", frame->ip - obj->baseAddr -
+			    sym->st_value);
+
+		if (obj && gShowObjectNames) {
+			fprintf(file, " in %s",
+			    gShowObjectNames > 1 ||
+			    !(p = strrchr(obj->fileName, '/')) ?
+			    obj->fileName : p + 1);
+		}
+		fprintf(file, "\n");
+	}
+	fprintf(file, "\n");
+	return;
+}
+
 /*
  * Print a stack trace of each stack in the process
  */
 static int
 procDumpStacks(FILE *file, struct Process *proc, int indent)
 {
-	struct StackFrame *frame;
-	struct ElfObject *obj;
-	int i;
-	struct Thread *thread;
-	const Elf_Sym *sym;
-	const char *fileName, *symName, *p, *padding;
+	struct Thread	*thread;
+	const char	*padding;
 
 	padding = pad(indent);
 	fprintf(file, "%s", padding);
@@ -574,45 +754,9 @@ procDumpStacks(FILE *file, struct Process *proc, int indent)
 	else
 		fprintf(file, "%d", proc->pid);
 	fprintf(file, ": %s\n", proc->execImage->fileName);
-	for (thread = proc->threadList; thread; thread = thread->next) {
-		fprintf(file, "%s----------------- thread %d ",
-		    padding, thread->id);
-		if (thread->running)
-			printf("(running) ");
-		fprintf(file, "-----------------\n");
-		STAILQ_FOREACH(frame, &thread->stack, link) {
-			symName = fileName = "????????";
-			sym = NULL;
-			obj = NULL;
-			if (procFindObject(proc, frame->ip, &obj) == 0) {
-				fileName = obj->fileName;
-				elfFindSymbolByAddress(obj,
-				    frame->ip - obj->baseAddr, STT_FUNC, &sym,
-				    &symName);
-			}
-			fprintf(file, "%s%#*zx ", padding - 1, 11, frame->ip);
-			if (gVerbose) /* Show ebp for verbose */
-			    fprintf(file, "0x%zx ", frame->bp);
-			fprintf(file, "%s (", symName);
-			if (frame->argCount) {
-				for (i = 0; i < frame->argCount - 1; i++)
-					fprintf(file, "%x, ", frame->args[i]);
-				fprintf(file, "%x", frame->args[i]);
-			}
-			fprintf(file, ")");
-			if (obj && sym != NULL)
-				printf(" + %zx", frame->ip - obj->baseAddr -
-				    sym->st_value);
-			if (obj && gShowObjectNames) {
-				printf(" in %s",
-				    gShowObjectNames > 1 ||
-				    !(p = strrchr(obj->fileName, '/')) ?
-				    obj->fileName : p + 1);
-			}
-			printf("\n");
-		}
-		fprintf(file, "\n");
-	}
+	for (thread = proc->threadList; thread; thread = thread->next)
+		procDumpThreadStacks(file, proc, thread, indent);
+
 	return (0);
 }
 

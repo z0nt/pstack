@@ -7,6 +7,8 @@ struct StackFrame {
 	STAILQ_ENTRY(StackFrame) link;
 	Elf_Addr	ip;
 	Elf_Addr	bp;
+	Elf_Addr	sp;
+	char		broken;
 	int		argCount;
 	Elf_Word	args[1];
 };
@@ -64,7 +66,7 @@ size_t	procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr,
 int	procReadVar(struct Process *proc, struct ElfObject *obj,
 	    const char *name, int *value);
 struct Thread *procReadThread(struct Process *proc, Elf_Addr bp,
-	    Elf_Addr ip);
+	    Elf_Addr ip, Elf_Addr sp);
 size_t	procWriteMem(struct Process *proc, const void *ptr, Elf_Addr remoteAddr,
 	    size_t size);
 
