@@ -49,6 +49,7 @@ struct ElfObject {
 	const struct stab *stabs;
 	const char 	*stabStrings;
 	int		 stabCount;
+	const struct ehframehdr	*ehframeHeader;
 };
 
 struct stab {

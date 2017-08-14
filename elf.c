@@ -48,6 +48,7 @@
 #include <unistd.h>
 
 #include "elfinfo.h"
+#include "eh.h"
 
 static unsigned long	elf_hash(const char *name);
 
@@ -87,6 +88,7 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 	obj->fileSize = sb.st_size;
 	obj->fileData = data;
 	obj->elfHeader = eHdr = (const Elf_Ehdr *)data;
+	obj->ehframeHeader = NULL;
 	/* Validate the ELF header */
 	if (!IS_ELF(*obj->elfHeader) ||
 	    eHdr->e_ident[EI_CLASS] != ELF_TARG_CLASS ||
@@ -141,9 +143,18 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 		else
 			obj->stabStrings = 0;
 	} else {
-	    obj->stabs = 0;
-	    obj->stabCount = 0;
+		obj->stabs = 0;
+		obj->stabCount = 0;
 	}
+
+	if (elfFindSectionByName(obj, ".eh_frame_hdr", &shdr) != -1) {
+		obj->ehframeHeader = (struct ehframehdr*)(obj->fileData + shdr->sh_offset);
+		if (obj->ehframeHeader->n_enc != 0x3b031b01) {
+			warnx("Untypical case of eh_frame_hdr, skip parsing");
+			printf("type: %x ptr: %x fdecnt: %x\n", obj->ehframeHeader->n_enc, obj->ehframeHeader->n_ptr, obj->ehframeHeader->n_fdecnt);
+		}
+	}
+
 	return (0);
 }
 
@@ -215,6 +226,7 @@ elfFindSymbolByAddress(struct ElfObject *obj, Elf_Addr addr,
 						*namep = symStrings +
 						    sym->st_name;
 						exact = 1;
+						goto out;
 					}
 				} else {
 					if ((*symp) == 0 || (*symp)->st_value <
@@ -227,6 +239,7 @@ elfFindSymbolByAddress(struct ElfObject *obj, Elf_Addr addr,
 			}
 		}
 	}
+out:
 	return (*symp ? 0 : -1);
 }
 
