@@ -1,4 +1,6 @@
-#
+CFLAGS=	-O0
+DEBUG_FLAGS=	-g
+
 PROG=	pstack
 SRCS=	elf.c pstack.c thread_db.c eh.c
 
