@@ -159,6 +159,9 @@ find_new_threads_callback(const td_thrhandle_t *th_p, void *data)
 		return (0);
 	}
 
+	if (gThreadID != -1 && gThreadID != ti.ti_tid)
+		return (0);
+
 	/* Ignore zombie */
 	if (ti.ti_state == TD_THR_UNKNOWN || ti.ti_state == TD_THR_ZOMBIE)
 		return (0);

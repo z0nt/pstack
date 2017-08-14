@@ -72,6 +72,8 @@ static int gMaxFrames = 1024;		/* max number of frames to read */
 static int gDoTiming = 0;		/* Report time process was stopped */
 static int gShowObjectNames = 0;	/* show names of objects for each IP */
 static int gVerbose = 0;
+int gThreadID = -1;		/* filter by thread, -1 - all */
+static int gIterations = 1;
 
 /* Amount of time process was suspended (if gDoTiming == 1) */
 static struct timeval gSuspendTime;
@@ -109,7 +111,7 @@ main(int argc, char **argv)
 	struct ElfObject *dumpObj;
 	struct thread_ops **tdops;
 
-	while ((c = getopt(argc, argv, "a:d:e:f:hoOs:tv")) != -1) {
+	while ((c = getopt(argc, argv, "a:d:e:f:n:T:hoOs:tv")) != -1) {
 		switch (c) {
 		case 'a':
 			gFrameArgs = atoi(optarg);
@@ -134,6 +136,10 @@ main(int argc, char **argv)
 		case 'h':
 			usage();
 			return 0;
+		case 'n':
+			gIterations = MAX(1, atoi(optarg));
+			warn("Batch mode: %d",gIterations);
+			break;
 		case 'o':
 			gShowObjectNames = 1;
 			break;
@@ -145,6 +151,9 @@ main(int argc, char **argv)
 			break;
 		case 't':
 			gDoTiming = 1;
+			break;
+		case 'T':
+			gThreadID = atoi(optarg);
 			break;
 		case 'v':
 			gVerbose++;
@@ -161,27 +170,34 @@ main(int argc, char **argv)
 		(*tdops)->startup();
 		tdops++;
 	}
-	for (err = 0, i = optind; i < argc; i++) {
-		pid = atoi(argv[i]);
-		if (pid == 0 || (kill(pid, 0) == -1 && errno == ESRCH)) {
-			/* Assume argv[i] is a core file */
-			coreFile = argv[i];
-			pid = -1;
-		} else {
-			/* Assume argv[i] is a pid */
-			coreFile = 0;
-		}
-		if (procOpen(pid, execFile, coreFile, &proc) == 0) {
-			procDumpStacks(stdout, proc, 0);
-			procFree(proc);
-			if (gDoTiming)
-				fprintf(stderr,
-				    "suspended for %zd.%06ld secs\n",
-				    gSuspendTime.tv_sec, gSuspendTime.tv_usec);
-		} else {
-			err = EX_OSERR;
+	for (int iteration = 0; iteration < gIterations; iteration++) {
+		if (iteration > 0)
+			usleep(200000);
+
+		for (err = 0, i = optind; i < argc; i++) {
+			pid = atoi(argv[i]);
+			if (pid == 0 || (kill(pid, 0) == -1 && errno == ESRCH)) {
+				/* Assume argv[i] is a core file */
+				coreFile = argv[i];
+				pid = -1;
+			} else {
+				/* Assume argv[i] is a pid */
+				coreFile = 0;
+			}
+
+			if (procOpen(pid, execFile, coreFile, &proc) == 0) {
+				procDumpStacks(stdout, proc, 0);
+				procFree(proc);
+				if (gDoTiming)
+					fprintf(stderr,
+						"suspended for %zd.%06ld secs\n",
+						gSuspendTime.tv_sec, gSuspendTime.tv_usec);
+			} else {
+				err = EX_OSERR;
+			}
 		}
 	}
+
 	return (err);
 }
 
