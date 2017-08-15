@@ -39,57 +39,62 @@
 #include <string.h>   // for strcmp, strlen
 #include "elfinfo.h"  // for ElfObject
 
+static int	ehLogging = 0;
+
 /*
  * table - sorted table of FDEs
  * count - amount of FDEs in table
  * key   - key to search
  * ret   - found value
  */
-
-static int	ehLogging = 0;
-
 static int	ehFindFDE(const struct ehframehdr_item	*table, int count,
 		    int32_t key, uint32_t *ret);
 
 static uint64_t	_dwarf_decode_uleb128(uint8_t **dp);
 static int64_t	_dwarf_decode_sleb128(uint8_t **dp);
 static int	_dwarf_frame_convert_inst(uint8_t addr_size,
-		    struct eh_record_info* info,
+		    struct eh_record_info *info,
 		    struct eh_cfa_state *rules,
 		    uint32_t *count);
 static uint64_t	_dwarf_decode_lsb(uint8_t **data, int bytes_to_read);
 
-static int
-ehFindFDE(const struct ehframehdr_item	*table, int count, int32_t key, uint32_t *ret)
-{
-	const int			 end = count - 1;
-	int				 left, right, temp;
+/* Implementation */
 
-	//index of last item in table
+static int
+ehFindFDE(const struct ehframehdr_item	*table, int count, int32_t key, 
+    uint32_t *ret)
+{
+	const int	end = count - 1;
+	int		left, right, temp;
+
+	/* index of last item in table */
 	right = end;
 	left = 0;
 
-	// simple cases
-	if ((end == 0) && (table[0].rel_ip <= key))
-	{
+	/* if there is only one element and it matches key */
+	if ((end == 0) && (table[0].rel_ip <= key)) {
 		temp = 0;
 		goto success;
 	}
 
+	/* if there is only one element and it doesn't match key */
 	if (end <= 0)
 		return (-1);
 
 	do {
 		temp = (left + right) >> 1;
 
-		// small region - check both
+		/* small region - check both */
 		if (right - left == 1) {
-			if ((table[left].rel_ip <= key) && (table[right].rel_ip > key)) {
+			if ((table[left].rel_ip <= key) && 
+			    (table[right].rel_ip > key)) {
 				temp = left;
 				goto success;
 			}
 
-			if ((table[right].rel_ip <= key) && (right < end) && (table[right + 1].rel_ip > key)) {
+			if ((table[right].rel_ip <= key) && 
+			    (right < end) && 
+			    (table[right + 1].rel_ip > key)) {
 				temp = right;
 				goto success;
 			}
@@ -102,34 +107,31 @@ ehFindFDE(const struct ehframehdr_item	*table, int count, int32_t key, uint32_t 
 		else if (temp == right)
 			temp = right - 1;
 
-
-
-		// edge cases - success
+		/* if we're on the edge, check key */
 		if (((temp == end) && (table[temp].rel_ip < key)) ||
 		    ((temp == 0) && (table[1].rel_ip > key)))
-		{
 			goto success;
-		}
 
-		// edge cases - fail
+		/* edge cases - fail */
 		if ((temp == end) || (temp == 0))
 			return (-1);
 
-		// successful
+		/* next step */
 		if (table[temp].rel_ip <= key) {
 			if (table[temp + 1].rel_ip > key)
 				goto success;
 			left = temp;
-		} else {
+		} else
 			right = temp;
-		}
-	} while(1);
+	} while (1);
 
 success:
-	if (ehLogging & EH_PRINT_FDE)
-		printf("ehFindFDE cnt: %d, key: %d, index: %d, found_key:%d, value: %x\n",count, key, temp, table[temp].rel_ip, table[temp].offset);
-	*ret = table[temp].offset;
+	*ret = table[temp].offset; 
 
+	if (ehLogging & EH_PRINT_FDE)
+		printf("ehFindFDE cnt: %d, key: %d, index: %d, found_key:%d, "
+		    "value: %x\n", count, key, temp, table[temp].rel_ip, *ret);
+	
 	return (0);
 }
 
@@ -151,6 +153,9 @@ ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress,
 	    rules->eh_rel_ip, &fde_offset) != 0)
 		return (-1);
 
+	cie_info = NULL;
+	fde_info = NULL;
+
 	cie_info = malloc(sizeof(struct eh_cie_info));
 	fde_info = malloc(sizeof(struct eh_fde_info));
 
@@ -160,7 +165,7 @@ ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress,
 	fde = ((void*)ehframehdr + fde_offset);
 	cie = (void*) &(fde->common.cie_offset) - fde->common.cie_offset;
 
-	// Unsupported very long FDE. Probably impossible case
+	/* TODO: Unsupported very long FDE. Probably impossible case */
 	if (fde->common.len == 0xFFFFFFFF)
 		goto clean;
 
@@ -169,9 +174,6 @@ ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress,
 	fde_info->common.instr = ((void*)&(fde->fields.fde_specific.augmentation_len)) +
 	    sizeof(fde->fields.fde_specific.augmentation_len) +
 	    fde->fields.fde_specific.augmentation_len;
-	    //fde_info->common.base +
-	    //sizeof(struct eh_record_common) + sizeof(struct eh_record_fde) +
-	    //fde->fields.fde_specific.augmentation_len;
 
 	fde_info->common.instr_len = fde_info->common.len -
 	    (fde_info->common.instr - fde_info->common.base);
@@ -182,15 +184,17 @@ ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress,
 
 	cie_info->common.base = (uint8_t *)cie;
 	cie_info->common.len = cie->common.len + sizeof(cie->common.len);
-	// plus one byte on version
+
+	/* plus one byte due to field "version" */
 	cie_info->augmentation = (char *)cie_info->common.base +
 	    sizeof(struct eh_record_common) + sizeof(uint8_t);
 
-	//Unsupported case
+	/* TODO: Unsupported case - not zR */
 	if(strcmp(cie_info->augmentation, "zR") != 0){
-		warnx("cie_info: %s", cie_info->augmentation);
+		warnx("'zR' CIE is only supported\ncie_info: %s", cie_info->augmentation);
 		goto clean;
 	}
+
 	tmp = (uint8_t*)cie_info->augmentation + strlen(cie_info->augmentation) + 1;
 	cie_info->code_aligment = _dwarf_decode_uleb128(&tmp);
 	cie_info->data_aligment = _dwarf_decode_sleb128(&tmp);
@@ -214,7 +218,7 @@ ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress,
 		err = _dwarf_frame_convert_inst(8, &(cie_info->common), rules, &cnt);
 		if (ehLogging & EH_PRINT_FDE)
 			printf("err: %d, cnt: %u\n", err, cnt);
-		// hackish code: I dunno why, but FDE requires shift of IP and SP
+		/* FIXME: hackish code: I dunno why, but FDE requires shift of IP and SP */
 		rules->current_ip++;
 		rules->cfaoffset -= rules->data_aligment;
 		err = _dwarf_frame_convert_inst(8, &(fde_info->common), rules, &cnt);
@@ -229,6 +233,7 @@ ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress,
 clean:
 	if(cie_info != NULL)
 		free(cie_info);
+
 	if(fde_info != NULL)
 		free(fde_info);
 
@@ -242,8 +247,10 @@ ehPrintRules(struct eh_cfa_state *rules)
 	if (rules == NULL)
 		return;
 
-	printf("	0x%x: code aligned on %lu, data aligned on %ld\n", rules->target_ip, rules->code_aligment, rules->data_aligment);
-	printf("	CFA: reg<%d> off<%d>\n", rules->cfareg, rules->cfaoffset );
+	printf("	0x%x: code aligned on %lu, data aligned on %ld\n"
+	       "	CFA: reg<%d> off<%d>\n",
+	    rules->target_ip, rules->code_aligment, rules->data_aligment, 
+	    rules->cfareg, rules->cfaoffset);
 	for (int i = 0; i < REGCNT; i++)
 		if(rules->reg[i] != 0)
 			printf("	REG[%d]: off<%d>\n", i, rules->reg[i]);
@@ -254,7 +261,8 @@ int32_t
 ehGetRelativeIP(Elf_Addr ip, struct ElfObject *obj)
 {
 
-	return (ip - obj->baseAddr - ((void*)obj->ehframeHeader - (void*)obj->fileData));
+	return (ip - obj->baseAddr - 
+	    ((void*)obj->ehframeHeader - (void*)obj->fileData));
 }
 
 /*
@@ -272,10 +280,8 @@ typedef struct {
 } Dwarf_Frame_Op3;
 
 static int
-_dwarf_frame_convert_inst(uint8_t addr_size,
-    struct eh_record_info* info,
-    struct eh_cfa_state	*rules,
-    uint32_t *count)
+_dwarf_frame_convert_inst(uint8_t addr_size, struct eh_record_info *info,
+    struct eh_cfa_state	*rules, uint32_t *count)
 {
 	uint8_t 		*p, *pe;
 	uint8_t 		 high2, low6;
@@ -486,11 +492,13 @@ _dwarf_frame_convert_inst(uint8_t addr_size,
 static int64_t
 _dwarf_decode_sleb128(uint8_t **dp)
 {
-	int64_t ret = 0;
-	uint8_t b;
-	int shift = 0;
+	int64_t		 ret;
+	uint8_t		*src, b;
+	int		 shift;
 
-	uint8_t *src = *dp;
+	src = *dp;
+	ret = 0;
+	shift = 0;
 
 	do {
 		b = *src++;
@@ -498,7 +506,7 @@ _dwarf_decode_sleb128(uint8_t **dp)
 		shift += 7;
 	} while ((b & 0x80) != 0);
 
-	if (shift < 64 && (b & 0x40) != 0)
+	if ((shift < 64) && ((b & 0x40) != 0))
 		ret |= (-1 << shift);
 
 	*dp = src;
@@ -509,11 +517,13 @@ _dwarf_decode_sleb128(uint8_t **dp)
 static uint64_t
 _dwarf_decode_uleb128(uint8_t **dp)
 {
-	uint64_t ret = 0;
-	uint8_t b;
-	int shift = 0;
-
-	uint8_t *src = *dp;
+	uint64_t	 ret;
+	uint8_t		*src, b;
+	int 		 shift;
+	
+	src = *dp;
+	ret = 0;
+	shift = 0;
 
 	do {
 		b = *src++;
@@ -529,12 +539,12 @@ _dwarf_decode_uleb128(uint8_t **dp)
 static uint64_t
 _dwarf_decode_lsb(uint8_t **data, int bytes_to_read)
 {
-	uint64_t ret;
-	uint8_t *src;
+	uint64_t	 ret;
+	uint8_t		*src;
 
 	src = *data;
-
 	ret = 0;
+
 	switch (bytes_to_read) {
 	case 8:
 		ret |= ((uint64_t) src[4]) << 32 | ((uint64_t) src[5]) << 40;
@@ -557,6 +567,4 @@ _dwarf_decode_lsb(uint8_t **data, int bytes_to_read)
 
 	return (ret);
 }
-
-
 

@@ -11,18 +11,31 @@
 #include <sys/_stdint.h>  // for uint32_t, int32_t, uint8_t, int64_t, uint64_t
 #include <x86/elf.h>      // for Elf_Addr
 
+#define	REGCNT	200
+
+/* Logging levels */
+
+enum {
+        EH_PRINT_RULES = 1,
+        EH_PRINT_BYTECODE = 2,
+        EH_PRINT_FDE = 4,
+        EH_PRINT_ALL = 255
+};
+
+/* Structures */
+
 struct ElfObject;
 
 struct ehframehdr_item {
-	int32_t rel_ip;
-	uint32_t offset;
+	int32_t		rel_ip;
+	uint32_t	offset;
 };
 
 struct ehframehdr {
-	uint32_t n_enc;
-	uint32_t n_ptr;
-	uint32_t n_fdecnt;
-	struct ehframehdr_item base;
+	uint32_t		n_enc;
+	uint32_t		n_ptr;
+	uint32_t		n_fdecnt;
+	struct ehframehdr_item	base;
 };
 
 struct eh_record_fde {
@@ -65,8 +78,6 @@ struct eh_cie_info {
 	uint8_t			register_ra;
 };
 
-#define	REGCNT		200
-
 struct eh_cfa_state {
 	uint32_t	current_ip, target_ip;
 	uint32_t	fde_offset;
@@ -78,14 +89,9 @@ struct eh_cfa_state {
 	int32_t		reg[REGCNT];
 };
 
-enum {
-	EH_PRINT_RULES = 1,
-	EH_PRINT_BYTECODE = 2,
-	EH_PRINT_FDE = 4,
-	EH_PRINT_ALL = 255
-};
 
-int	ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress, struct eh_cfa_state	*rules);
+int	ehLookupFrame(const struct ehframehdr *ehframehdr, 
+	    const char *dataAddress, struct eh_cfa_state *rules);
 int32_t ehGetRelativeIP(Elf_Addr ip, struct ElfObject *obj);
 void	ehPrintRules(struct eh_cfa_state *rules);
 

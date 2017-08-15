@@ -75,7 +75,7 @@ static int gMaxFrames = 1024;		/* max number of frames to read */
 static int gDoTiming = 0;		/* Report time process was stopped */
 static int gShowObjectNames = 0;	/* show names of objects for each IP */
 static int gVerbose = 0;
-int gThreadID = -1;		/* filter by thread, -1 - all */
+int gThreadID = -1;			/* filter by thread, -1 - all */
 static int gIterations = 1;
 
 /* Amount of time process was suspended (if gDoTiming == 1) */
@@ -95,8 +95,8 @@ static int	procFindObject(struct Process *proc, Elf_Addr addr,
 static int	procDumpStacks(FILE *file, struct Process *proc, int indent);
 static void	procDumpThreadStacks(FILE *file, struct Process *proc,
 		    struct Thread *thread, int indent);
-static void	procAddElfObject(struct Process *proc,
-			struct ElfObject *obj, Elf_Addr base);
+static void	procAddElfObject(struct Process *proc, struct ElfObject *obj,
+		    Elf_Addr base);
 static void	procFree(struct Process *proc);
 static void	procFreeThreads(struct Process *proc);
 static void	procFreeObjects(struct Process *proc);
@@ -144,7 +144,6 @@ main(int argc, char **argv)
 			return 0;
 		case 'n':
 			gIterations = MAX(1, atoi(optarg));
-			warn("Batch mode: %d",gIterations);
 			break;
 		case 'o':
 			gShowObjectNames = 1;
@@ -529,16 +528,17 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 		rules->target_ip = ip - objp->baseAddr;
 		rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
 
-		if (ehLookupFrame(objp->ehframeHeader, objp->fileData, rules) == 0) {
+		if (ehLookupFrame(objp->ehframeHeader, objp->fileData, rules) == 0)
 			if(rules->cfareg == 7)
 			{
 				ehPrintRules(rules);
 				bp = sp + rules->cfaoffset + (2 * rules->data_aligment);
 			}
-		}
+		
 		free(rules);
 	} else {
-		warnx("jitted code: ip = 0x%lx sp = 0x%lx bp = 0x%lx", ip, sp, bp);	//TODO: ???
+		/* TODO: ??? */
+		warnx("jitted code: ip = 0x%lx sp = 0x%lx bp = 0x%lx", ip, sp, bp);
 	}
 
 	thread = malloc(sizeof(struct Thread));
@@ -561,6 +561,7 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 			    sizeof(Elf_Word)) != sizeof(Elf_Word))
 				break;
 		frame->argCount = i;
+
 		/* Read the next frame */
 		if (procReadMem(proc, &ip, bp + ip_offset, sizeof(ip)) != sizeof(ip)) {
 			frame->broken = '!';
@@ -578,14 +579,16 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 			break;
 		}
 
-		rules = NULL;
 		/*
 		 * Let's suppose FPO optimization. Try to find object
 		 * of last known frame and look for eh_frame_hdr info.
 		 */
 
+		rules = NULL;
 		if (procFindObject(proc, ip, &objp) != 0) {
-			warnx("??? jitted code ??? frame %d: 0x%lx, prev - 0x%lx, sp - 0x%lx, bp - 0x%lx", frameCount, ip, frame->ip, frame->sp, frame->bp);
+			/* TODO: ??? */
+			warnx("jit? fr%d: ip 0x%lx, prev_ip 0x%lx, sp 0x%lx, bp 0x%lx", 
+			    frameCount, ip, frame->ip, frame->sp, frame->bp);
 			goto fpo_fail;
 		}
 
@@ -607,16 +610,17 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 			goto fpo_fail;
 		}
 
-		// BP register has number 6
+		/* BP register number is 6 */
 		if(rules->cfareg == 6) {
-			// BP is present, no error
+			/* BP is present, no error */
 			goto fpo_fail;
 		}
 
-		// not SP - error
+		/* if CFA register is neither SP nor BP, then raise error */
 		if(rules->cfareg != 7)
 		{
-			warnx("CFAREG not SP offset: 0%x 0x%lx / 0x%x (%s)", rules->cfareg, ip, rules->target_ip, objp->fileName);
+			warnx("CFA is not SP/BP offset: 0%x 0x%lx / 0x%x (%s)",
+			    rules->cfareg, ip, rules->target_ip, objp->fileName);
 			ehPrintRules(rules);
 			goto fpo_fail;
 		}
@@ -630,10 +634,12 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 		 * i.e. our frame pointer + 2 + RA shift
 		 */
 		bp = frame->bp + rules->cfaoffset;
+		/* TODO: 0x10 is return address, take it from EH information */
 		ip_offset = rules->reg[0x10] - (2 * rules->data_aligment);
 
 		if(rules != NULL)
 			free(rules);
+
 		frame->broken = 0;
 		continue;
 fpo_fail:
@@ -702,7 +708,7 @@ procDumpThreadStacks(FILE *file, struct Process *proc, struct Thread *thread, in
 		obj = NULL;
 		if (procFindObject(proc, frame->ip, &obj) == 0) {
 			fileName = obj->fileName;
-			//TODO: batch frame for same object
+			/* TODO: batch frames for same object */
 			elfFindSymbolByAddress(obj,
 			    frame->ip - obj->baseAddr, STT_FUNC, &sym,
 			    &symName);
