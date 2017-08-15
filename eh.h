@@ -8,6 +8,11 @@
 #ifndef EH_H_
 #define EH_H_
 
+#include <sys/_stdint.h>  // for uint32_t, int32_t, uint8_t, int64_t, uint64_t
+#include <x86/elf.h>      // for Elf_Addr
+
+struct ElfObject;
+
 struct ehframehdr_item {
 	int32_t rel_ip;
 	uint32_t offset;

@@ -29,18 +29,15 @@
  * This file provides API to parse .eh_frame and .eh_frame_hdr sections of
  * binaries to retrieve frames without frame pointer information.
  */
-
 #include <sys/types.h>
 
-#include <dwarf.h>
-#include <elf.h>
-#include <err.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-
-#include "elfinfo.h"
 #include "eh.h"
+#include <dwarf.h>    // for DW_CFA_advance_loc, DW_CFA_advance_loc1, DW_CFA...
+#include <err.h>      // for warnx
+#include <stdio.h>    // for printf, NULL
+#include <stdlib.h>   // for free, malloc
+#include <string.h>   // for strcmp, strlen
+#include "elfinfo.h"  // for ElfObject
 
 /*
  * table - sorted table of FDEs
