@@ -70,4 +70,10 @@ struct Thread *procReadThread(struct Process *proc, Elf_Addr bp,
 size_t	procWriteMem(struct Process *proc, const void *ptr, Elf_Addr remoteAddr,
 	    size_t size);
 
+/* Use C++ ABI to demangle C++ functions */
+char* __cxa_demangle(const char* mangled_name,
+                     char* buf,
+                     size_t* n,
+                     int* status);
+
 #endif

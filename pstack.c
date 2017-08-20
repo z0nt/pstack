@@ -61,8 +61,6 @@
 #include <sysexits.h>
 #include <unistd.h>
 
-#include <libelftc.h>
-
 #include "elfinfo.h"
 #include "eh.h"
 #include "pstack.h"
@@ -552,7 +550,8 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 		frame->ip = ip;
 		frame->bp = bp;
 		frame->sp = sp;
-		printf("frame: 0x%lx 0x%lx 0x%d\n", ip, bp, ip_offset);
+		if(gVerbose > 1)
+			printf("frame: 0x%lx 0x%lx 0x%d\n", ip, bp, ip_offset);
 		frame->broken = 0;
 		STAILQ_INSERT_TAIL(&thread->stack, frame, link);
 		for (i = 0; i < gFrameArgs; i++)
@@ -575,7 +574,8 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 
 		if (ip == 0) {
 			frame->broken = '.';
-			procDumpThreadStacks(stdout, proc, thread, 4);
+			if(gVerbose > 1)
+				procDumpThreadStacks(stdout, proc, thread, 4);
 			break;
 		}
 
@@ -587,8 +587,11 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 		rules = NULL;
 		if (procFindObject(proc, ip, &objp) != 0) {
 			/* TODO: ??? */
-			warnx("jit? fr%d: ip 0x%lx, prev_ip 0x%lx, sp 0x%lx, bp 0x%lx", 
-			    frameCount, ip, frame->ip, frame->sp, frame->bp);
+			if (gVerbose > 1)
+				warnx("jit? fr%d: ip 0x%lx, prev_ip 0x%lx, "
+				    " sp 0x%lx, bp 0x%lx",
+				    frameCount, ip, frame->ip,
+				    frame->sp, frame->bp);
 			goto fpo_fail;
 		}
 
@@ -601,10 +604,12 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 		rules->target_ip = ip - objp->baseAddr;
 		rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
 
-//		printf("ehLookup: IP 0x%x 0x%lx (file %s at %p), "
-//		    "EH(ip: %d, hdr: %p)\n",
-//		    rules->target_ip, frame->bp, objp->fileName, objp->fileData,
-//		    rules->eh_rel_ip, objp->ehframeHeader);
+		if (gVerbose > 1)
+			printf("ehLookup: IP 0x%x 0x%lx (file %s at %p), "
+			    "EH(ip: %d, hdr: %p)\n",
+			    rules->target_ip, frame->bp, objp->fileName,
+			    objp->fileData, rules->eh_rel_ip,
+			    objp->ehframeHeader);
 
 		if (ehLookupFrame(objp->ehframeHeader, objp->fileData, rules) != 0) {
 			goto fpo_fail;
@@ -647,7 +652,8 @@ fpo_fail:
 			free(rules);
 
 		if ((bp <= frame->bp) || ((bp - frame->bp) > 0x100000)){
-			frame->broken = '*';
+			if (gVerbose > 1)
+				frame->broken = '*';
 			break;
 		}
 
@@ -689,13 +695,15 @@ procDumpThreadStacks(FILE *file, struct Process *proc, struct Thread *thread, in
 	struct ElfObject	*obj;
 	const Elf_Sym		*sym;
 	const char		*padding, *fileName, *symName, *p;
-	int			 i;
-	char 			 buf[1024];
+	int			 tmp;
+	size_t			 size;
+	char 			*buf, *tmpStr;
 
 	if (gThreadID != -1 && gThreadID != thread->id)
 		return;
 
 	padding = pad(indent);
+	size = 1024 * sizeof(char);
 
 	fprintf(file, "%s----------------- thread %d ",
 	    padding, thread->id);
@@ -706,25 +714,39 @@ procDumpThreadStacks(FILE *file, struct Process *proc, struct Thread *thread, in
 		symName = fileName = "????????";
 		sym = NULL;
 		obj = NULL;
+		buf = NULL;
 		if (procFindObject(proc, frame->ip, &obj) == 0) {
 			fileName = obj->fileName;
 			/* TODO: batch frames for same object */
 			elfFindSymbolByAddress(obj,
 			    frame->ip - obj->baseAddr, STT_FUNC, &sym,
 			    &symName);
-			if(elftc_demangle(symName, buf, sizeof(buf), 0) == 0)
-				symName = buf;
+
+			if (symName != NULL && strlen(symName) > 2 && symName[0] == '_' && symName[1] == 'Z') {
+				buf = malloc(size);
+				buf = __cxa_demangle(symName, buf, &size, &tmp);
+				if ( tmp != 0 ) {
+					free(buf);
+					buf = NULL;
+				} else {
+					symName = buf;
+				}
+			}
 		}
-		if (frame->broken != 0)
+		if (gVerbose > 1 && frame->broken != 0)
 			fprintf(file, "%c", frame->broken);
 		fprintf(file, "%s%#*zx ", padding - 1, 11, frame->ip);
 		if (gVerbose) /* Show ebp for verbose */
 		    fprintf(file, "0x%zx ", frame->bp);
 		fprintf(file, "%s (", symName);
+		if (buf != NULL) {
+			free (buf);
+			buf = NULL;
+		}
 		if (frame->argCount) {
-			for (i = 0; i < frame->argCount - 1; i++)
-				fprintf(file, "%x, ", frame->args[i]);
-			fprintf(file, "%x", frame->args[i]);
+			for (tmp = 0; tmp < frame->argCount - 1; tmp++)
+				fprintf(file, "%x, ", frame->args[tmp]);
+			fprintf(file, "%x", frame->args[tmp]);
 		}
 		fprintf(file, ")");
 
