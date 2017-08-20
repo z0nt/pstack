@@ -159,6 +159,9 @@ find_new_threads_callback(const td_thrhandle_t *th_p, void *data)
 		return (0);
 	}
 
+	if (gThreadID != -1 && gThreadID != ti.ti_tid)
+		return (0);
+
 	/* Ignore zombie */
 	if (ti.ti_state == TD_THR_UNKNOWN || ti.ti_state == TD_THR_ZOMBIE)
 		return (0);
@@ -172,9 +175,9 @@ find_new_threads_callback(const td_thrhandle_t *th_p, void *data)
 
 	proc = data;
 #ifdef __LP64__
-	t = procReadThread(proc, gregset[0].r_rbp, gregset[0].r_rip);
+	t = procReadThread(proc, gregset[0].r_rbp, gregset[0].r_rip, gregset[0].r_rsp);
 #else
-	t = procReadThread(proc, gregset[0].r_ebp, gregset[0].r_eip);
+	t = procReadThread(proc, gregset[0].r_ebp, gregset[0].r_eip, gregset[0].r_esp);
 #endif
 	if (t != NULL) {
 		t->id = ti.ti_tid;

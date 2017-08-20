@@ -12,9 +12,11 @@
 .Op Fl a Ar arg-count
 .Op Fl e Ar executable-file
 .Op Fl f Ar frame-count
+.Op Fl n Ar iteration-count
 .Op Fl o
 .Op Fl O
 .Op Fl t
+.Op Fl T Ar thread-id
 .Op Fl v
 .Ar pid | core
 .Nm
@@ -43,9 +45,17 @@ to print a dump of the ELF information in an object file,
 and exit.
 .It Fl e Ar file
 Specify an alternate executable to use for locating symbols in the
-process.  This is useful if the process was started from a stripped
+process.
+This is useful if the process was started from a stripped
 version of an executable, and you have the unstripped version
-available. If examining a corefile, this argument is required.
+available.
+If examining a corefile, this argument is required.
+.It Fl n Ar iteration-count
+Causes
+.Nm
+to display stack traces
+.Ar iteration-count
+times
 .It Fl o
 For each stack frame, display the name of the object in which the current
 function lies
@@ -55,8 +65,11 @@ the current function lies
 .It Fl t
 Display the amount of time that the process was suspended by
 .Nm
+.It Fl T Ar thread-id
+Display stack frame only for thread with specified thread ID
 .It Fl v
-verbose. Display debugging and diagnostics.
+verbose.
+Display debugging and diagnostics.
 .El
 .Sh SEE ALSO
 .Xr ptrace 2
@@ -64,6 +77,6 @@ verbose. Display debugging and diagnostics.
 .Nm
 works only for x86 32/64-bit ELF executables at the moment. (ie, no
 a.out support, and no Alpha support).
-It is also very dependent on the current FreeBSD threads implementation. 
+It is also very dependent on the current FreeBSD threads implementation.
 .Sh AUTHORS
 Peter Edwards <pmedwards@eircom.net>
