@@ -160,12 +160,19 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 	if (elfFindSectionByName(obj, ".eh_frame_hdr", &shdr) != -1) {
 		obj->ehframeHeader = ehFrameHdr = (struct ehframehdr*)
 		   (obj->fileData + shdr->sh_offset);
-		if (ehFrameHdr->n_enc != 0x3b031b01) {
+		obj->ehframe_phys_to_virt= shdr->sh_addr - shdr->sh_offset;
+		if (ehFrameHdr->magic != EH_FRAME_MAGIC) {
 			warnx("Untypical case of eh_frame_hdr, skip parsing");
 			printf("type: %x ptr: %x fdecnt: %x\n", 
-			    ehFrameHdr->n_enc, ehFrameHdr->n_ptr, 
+			    ehFrameHdr->magic, ehFrameHdr->n_ptr,
 			    ehFrameHdr->n_fdecnt);
 		}
+	} else if(elfFindSectionByName(obj, ".zdebug_frame", &shdr) != -1) {
+		/*
+		 * Golang doesn't use error handling
+		 */
+		printf("Found compressed DWARF frame section. need support\n");
+
 	}
 
 	return (0);

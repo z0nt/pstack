@@ -78,6 +78,8 @@ static int gIterations = 1;
 
 /* Amount of time process was suspended (if gDoTiming == 1) */
 static struct timeval gSuspendTime;
+static struct timeval gSuspendLoadedTime;
+
 
 static struct thread_ops *thread_ops[] = {
 	&thread_db_ops,
@@ -191,10 +193,14 @@ main(int argc, char **argv)
 			if (procOpen(pid, execFile, coreFile, &proc) == 0) {
 				procDumpStacks(stdout, proc, 0);
 				procFree(proc);
-				if (gDoTiming)
+				if (gDoTiming) {
 					fprintf(stderr,
 						"suspended for %zd.%06ld secs\n",
 						gSuspendTime.tv_sec, gSuspendTime.tv_usec);
+					fprintf(stderr,
+						"loaded in %zd.%06ld secs\n",
+						gSuspendLoadedTime.tv_sec, gSuspendLoadedTime.tv_usec);
+				}
 			} else {
 				err = EX_OSERR;
 			}
@@ -226,7 +232,7 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	struct Process **procp)
 {
 	struct Thread *t;
-	struct timeval start, end;
+	struct timeval start, loadedObjects, end;
 	int i, status, rc;
 	char tmpBuf[PATH_MAX];
 	struct Process *proc;
@@ -319,6 +325,8 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 	}
 	/* Attach any dynamically-linked libraries */
 	procLoadSharedObjects(proc);
+	if (gDoTiming)
+		gettimeofday(&loadedObjects, 0);
 
 	/* See if we have any threads. */
 	tdops = thread_ops;
@@ -359,6 +367,12 @@ procOpen(pid_t pid, const char *exeName, const char *coreFile,
 			if (gSuspendTime.tv_usec < 0) {
 				gSuspendTime.tv_sec -= 1;
 				gSuspendTime.tv_usec += 1000000;
+			}
+			gSuspendLoadedTime.tv_sec = loadedObjects.tv_sec - start.tv_sec;
+			gSuspendLoadedTime.tv_usec = loadedObjects.tv_usec - start.tv_usec;
+			if (gSuspendLoadedTime.tv_usec < 0) {
+				gSuspendLoadedTime.tv_sec -= 1;
+				gSuspendLoadedTime.tv_usec += 1000000;
 			}
 		}
 	}
@@ -493,16 +507,22 @@ procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr, size_t size)
 struct Thread *
 procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 {
-	int frameCount, i;
-	struct StackFrame *frame;
-	const int frameSize = sizeof(*frame) + sizeof(Elf_Word) * gFrameArgs;
-	struct Thread *thread;
+	int		err, frameCount, i, pos;
+	int32_t		ip_offset, rel_ip;
 
-	int			 pos;
-	int32_t			 rel_ip;
-	struct ElfObject	*objp;
-	int32_t			 ip_offset;
+	Elf_Addr	next_ip, next_bp, next_sp;
+
 	struct eh_cfa_state	*rules;
+	struct ElfObject	*objp;
+	struct StackFrame	*frame;
+	struct Thread		*thread;
+
+	const int frameSize = sizeof(*frame) + sizeof(Elf_Word) * gFrameArgs;
+
+	/* Initialize next registers by initial values, prepare for shifting */
+	next_ip = ip;
+	next_bp = bp;
+	next_sp = sp;
 
 	/* Check to see if we have already seen this thread. */
 	for (thread = proc->threadList; thread != NULL; thread = thread->next) {
@@ -511,49 +531,83 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 			return (thread);
 	}
 
+	if(gVerbose > 0)
+		fprintf( stderr,
+		    "\n---- thread:\tip = 0x%016lx bp = 0x%016lx sp = 0x%016lx\n",
+		    ip, bp, sp);
+
 	/*
-	 * There are 2 options: initial frame is frame pointer optimized or not.
+	 * There are 2 options:
+	 * 	 - initial frame is frame pointer optimized (FPO)
+	 * 	 - initial frame is with frame pointer, not optimized
+	 *
 	 * If FPO, then if there is EH in object file, we can find CFA and
-	 * virtual BP. If there is no EH, assume no frame pointer optimization
+	 * virtual BP.
+	 * If there is no EH, assume no frame pointer optimization.
 	 */
-
-	if (procFindObject(proc, ip, &objp) == 0) {
-		rules = malloc(sizeof(struct eh_cfa_state));
-		if(rules == NULL) {
-			abort();
-		}
-		memset(rules, 0, sizeof(struct eh_cfa_state));
-		rules->target_ip = ip - objp->baseAddr;
-		rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
-
-		if (ehLookupFrame(objp->ehframeHeader, objp->fileData, rules) == 0)
-			if(rules->cfareg == 7)
-			{
-				ehPrintRules(rules);
-				bp = sp + rules->cfaoffset + (2 * rules->data_aligment);
-			}
-		
-		free(rules);
-	} else {
-		/* TODO: ??? */
-		warnx("jitted code: ip = 0x%lx sp = 0x%lx bp = 0x%lx", ip, sp, bp);
-	}
+//	if (procFindObject(proc, ip, &objp) == 0) {
+//		rules = malloc(sizeof(struct eh_cfa_state));
+//		if(rules == NULL) {
+//			abort();
+//		}
+//		memset(rules, 0, sizeof(struct eh_cfa_state));
+//		rules->target_ip = ip - objp->baseAddr;
+//		rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
+//
+//		err = ehLookupFrame(objp->ehframeHeader, objp->fileData, rules);
+//
+//		if (err != 0) {
+//			warnx("Can't read eh segments");
+//			abort();
+//		}
+//
+//		if (gVerbose > 1)
+//			ehPrintRules(rules);
+//
+//		if (rules->cfareg == 7)
+//		{
+//			next_sp = sp + rules->cfaoffset;
+//		}
+//
+//		next_ip = rules->reg[16]
+//		// + (2 * rules->data_aligment)
+//
+//
+//		free(rules);
+//	} else {
+//		/* TODO: ??? */
+//		warnx("jitted code: ip = 0x%lx sp = 0x%lx bp = 0x%lx", ip, sp, bp);
+//	}
 
 	thread = malloc(sizeof(struct Thread));
 	thread->running = 0;
-	ip_offset = sizeof(bp);
+	ip_offset = sizeof(Elf_Addr);
 	STAILQ_INIT(&thread->stack);
-	/* Put a bound on the number of iterations. */
+
+	/*
+	 * Iterate over frames
+	 * Put a bound on the number of iterations.
+	 */
 	for (frameCount = 0; frameCount < gMaxFrames; frameCount++) {
+		/*
+		 * Allocate memory for new frame, fill it by registers and store this
+		 * frame with args in the Thread
+		 */
 		frame = malloc(frameSize);
-		/* Store this frame, and its args in the Thread */
+		if (frame == NULL) {
+			//TODO: error handling
+		}
 		frame->ip = ip;
 		frame->bp = bp;
 		frame->sp = sp;
-		if(gVerbose > 1)
-			printf("frame: 0x%lx 0x%lx 0x%d\n", ip, bp, ip_offset);
 		frame->broken = 0;
 		STAILQ_INSERT_TAIL(&thread->stack, frame, link);
+
+		if(gVerbose > 1)
+			warnx("frame#%d:\tip = 0x%016lx bp = 0x%016lx sp = 0x%016lx offset = 0x%d",
+				frameCount, ip, bp, sp, ip_offset);
+
+		/* XXX: it's broken. Attempt to fetch arguments */
 		for (i = 0; i < gFrameArgs; i++)
 			if (procReadMem(proc, &frame->args[i],
 			    bp + sizeof(Elf_Word) * 2 + i * sizeof(Elf_Word),
@@ -561,73 +615,122 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 				break;
 		frame->argCount = i;
 
-		/* Read the next frame */
-		if (procReadMem(proc, &ip, bp + ip_offset, sizeof(ip)) != sizeof(ip)) {
-			frame->broken = '!';
-			break;
-		}
+		if (procFindObject(proc, ip, &objp) == 0) {
+			/*
+			 * Let's suppose FPO optimization. Try to find object
+			 * of last known frame and look for eh_frame_hdr info.
+			 */
+			rules = malloc(sizeof(struct eh_cfa_state));
+			if(rules == NULL) {
+				abort();
+			}
+			memset(rules, 0, sizeof(struct eh_cfa_state));
+			rules->target_ip = ip - objp->baseAddr;
+			rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
 
-		if (procReadMem(proc, &bp, bp, sizeof(bp)) != sizeof(bp)) {
-			frame->broken = '?';
-			break;
+			if (gVerbose > 2)
+				warnx("ehLookup:\tof = 0x%016x bp = 0x%016lx"
+				    "\n\t\t(file %s at %p)"
+				    "\n\t\t(EH eh_rel_ip: %d, ehframeHeader: %p)",
+				    rules->target_ip, frame->bp,
+				    objp->fileName, objp->fileData,
+				    rules->eh_rel_ip, objp->ehframeHeader);
+
+			err = ehLookupFrame(objp->ehframeHeader, objp->fileData, rules);
+
+			if (err != 0) {
+				if (gVerbose > 2)
+					warnx("Can't read eh segments: %d", err);
+				break;
+			}
+
+			if (gVerbose > 1)
+				ehPrintRules(rules);
+
+			if (rules->cfareg == 7)
+			{
+				/* SP register number is 7 */
+				next_sp = sp + rules->cfaoffset;
+				//XXX:
+				if (frameCount == 0) {
+					next_sp -= sizeof(Elf_Addr);
+				}
+				next_ip = next_sp + rules->reg[0x10];
+			} else if (rules->cfareg == 6)
+			{
+				/* BP register number is 6 */
+				next_bp = bp + rules->cfaoffset;
+				next_ip = next_bp + rules->reg[0x10];
+				if (rules->reg[6] != 0) {
+					next_bp += rules->reg[6];
+				}
+			} else {
+				/* if CFA register is neither SP nor BP, then raise error */
+				warnx("CFA is not SP/BP offset:"
+				    "0%x 0x%lx / 0x%x (%s)",
+				    rules->cfareg, ip, rules->target_ip,
+				    objp->fileName);
+				abort();
+			}
+
+			if (rules->reg[6] != 0 &&
+				procReadMem(proc, &next_bp, next_bp, sizeof(Elf_Addr)) != sizeof(Elf_Addr)) {
+				frame->broken = '!';
+				free(rules);
+				break;
+			}
+
+			if (rules->reg[7] != 0 &&
+				procReadMem(proc, &next_sp, next_sp, sizeof(Elf_Addr)) != sizeof(Elf_Addr)) {
+				frame->broken = '!';
+				free(rules);
+				break;
+			}
+
+			free(rules);
+
+			/* Fetch next RIP register value */
+			if (procReadMem(proc, &next_ip, next_ip, sizeof(Elf_Addr)) != sizeof(Elf_Addr)) {
+				frame->broken = '!';
+				break;
+			}
+		} else {
+			/*
+			 * Fetch caller IP and BP registers assuming actual frame contains:
+			 *  - caller ip is *[bp + word]
+			 *  - caller bp is *[bp]
+			 */
+			if (gVerbose > 1)
+				warnx("bad #%d:\tip = 0x%016lx bp = 0x%016lx"
+				    " sp = 0x%016lx prev_ip = 0x%016lx",
+				    frameCount + 1, ip, frame->ip,
+				    frame->sp, frame->bp);
+
+			if (procReadMem(proc, &next_ip, bp + ip_offset, sizeof(Elf_Addr)) != sizeof(Elf_Addr)) {
+				frame->broken = '!';
+				break;
+			}
+
+			if (procReadMem(proc, &next_bp, bp, sizeof(Elf_Addr)) != sizeof(Elf_Addr)) {
+				frame->broken = '?';
+				break;
+			}
 		}
+//		} else {
+//			if (procReadMem(proc, &next_ip, bp, sizeof(Elf_Addr)) != sizeof(Elf_Addr)) {
+//				frame->broken = '!';
+//				break;
+//			}
+//
+//			bp += sizeof(ip);
+//			sp += sizeof(ip);
+//		}
 
 		if (ip == 0) {
 			frame->broken = '.';
 			if(gVerbose > 1)
 				procDumpThreadStacks(stdout, proc, thread, 4);
 			break;
-		}
-
-		/*
-		 * Let's suppose FPO optimization. Try to find object
-		 * of last known frame and look for eh_frame_hdr info.
-		 */
-
-		rules = NULL;
-		if (procFindObject(proc, ip, &objp) != 0) {
-			/* TODO: ??? */
-			if (gVerbose > 1)
-				warnx("jit? fr%d: ip 0x%lx, prev_ip 0x%lx, "
-				    " sp 0x%lx, bp 0x%lx",
-				    frameCount, ip, frame->ip,
-				    frame->sp, frame->bp);
-			goto fpo_fail;
-		}
-
-		rules = malloc(sizeof(struct eh_cfa_state));
-		if(rules == NULL) {
-			goto fpo_fail;
-		}
-
-		memset(rules, 0, sizeof(struct eh_cfa_state));
-		rules->target_ip = ip - objp->baseAddr;
-		rules->eh_rel_ip = ehGetRelativeIP(ip, objp);
-
-		if (gVerbose > 1)
-			printf("ehLookup: IP 0x%x 0x%lx (file %s at %p), "
-			    "EH(ip: %d, hdr: %p)\n",
-			    rules->target_ip, frame->bp, objp->fileName,
-			    objp->fileData, rules->eh_rel_ip,
-			    objp->ehframeHeader);
-
-		if (ehLookupFrame(objp->ehframeHeader, objp->fileData, rules) != 0) {
-			goto fpo_fail;
-		}
-
-		/* BP register number is 6 */
-		if(rules->cfareg == 6) {
-			/* BP is present, no error */
-			goto fpo_fail;
-		}
-
-		/* if CFA register is neither SP nor BP, then raise error */
-		if(rules->cfareg != 7)
-		{
-			warnx("CFA is not SP/BP offset: 0%x 0x%lx / 0x%x (%s)",
-			    rules->cfareg, ip, rules->target_ip, objp->fileName);
-			ehPrintRules(rules);
-			goto fpo_fail;
 		}
 
 		/*
@@ -638,14 +741,15 @@ procReadThread(struct Process *proc, Elf_Addr bp, Elf_Addr ip, Elf_Addr sp)
 		 * previous BP + cfaoffset. Return address is CFA + RA shift,
 		 * i.e. our frame pointer + 2 + RA shift
 		 */
-		bp = frame->bp + rules->cfaoffset;
+		//next_bp = frame->bp + rules->cfaoffset;
 		/* TODO: 0x10 is return address, take it from EH information */
-		ip_offset = rules->reg[0x10] - (2 * rules->data_aligment);
-
-		if(rules != NULL)
-			free(rules);
+		//ip_offset = rules->reg[0x10] - (2 * rules->data_aligment);
 
 		frame->broken = 0;
+		sp = next_sp;
+		bp = next_bp;
+		ip = next_ip;
+
 		continue;
 fpo_fail:
 		if(rules != NULL)
@@ -658,6 +762,11 @@ fpo_fail:
 		}
 
 		ip_offset = sizeof(bp);
+		next_sp = frame->bp + sizeof(ip);
+
+		sp = next_sp;
+		bp = next_bp;
+		ip = next_ip;
 	}
 	thread->next = proc->threadList;
 	proc->threadList = thread;
@@ -722,7 +831,8 @@ procDumpThreadStacks(FILE *file, struct Process *proc, struct Thread *thread, in
 			    frame->ip - obj->baseAddr, STT_FUNC, &sym,
 			    &symName);
 
-			if (symName != NULL && strlen(symName) > 2 && symName[0] == '_' && symName[1] == 'Z') {
+			if (symName != NULL && strlen(symName) > 2 &&
+			    symName[0] == '_' && symName[1] == 'Z') {
 				buf = malloc(size);
 				buf = __cxa_demangle(symName, buf, &size, &tmp);
 				if ( tmp != 0 ) {
@@ -738,28 +848,32 @@ procDumpThreadStacks(FILE *file, struct Process *proc, struct Thread *thread, in
 		fprintf(file, "%s%#*zx ", padding - 1, 11, frame->ip);
 		if (gVerbose) /* Show ebp for verbose */
 		    fprintf(file, "0x%zx ", frame->bp);
-		fprintf(file, "%s (", symName);
+		if (obj && gShowObjectNames) {
+			fprintf(file, "in %s\t",
+			    gShowObjectNames > 1 ||
+			    !(p = strrchr(obj->fileName, '/')) ?
+			    obj->fileName : p + 1);
+		}
+		fprintf(file, "%s", symName);
 		if (buf != NULL) {
 			free (buf);
 			buf = NULL;
 		}
+
+		if (obj && sym != NULL)
+			fprintf(file, " + %zx", frame->ip - obj->baseAddr -
+			    sym->st_value);
+
+#if 0
+		fprintf(file, " (");
 		if (frame->argCount) {
 			for (tmp = 0; tmp < frame->argCount - 1; tmp++)
 				fprintf(file, "%x, ", frame->args[tmp]);
 			fprintf(file, "%x", frame->args[tmp]);
 		}
 		fprintf(file, ")");
+#endif
 
-		if (obj && sym != NULL)
-			fprintf(file, " + %zx", frame->ip - obj->baseAddr -
-			    sym->st_value);
-
-		if (obj && gShowObjectNames) {
-			fprintf(file, " in %s",
-			    gShowObjectNames > 1 ||
-			    !(p = strrchr(obj->fileName, '/')) ?
-			    obj->fileName : p + 1);
-		}
 		fprintf(file, "\n");
 	}
 	fprintf(file, "\n");
@@ -871,8 +985,9 @@ procLoadSharedObjects(struct Process *proc)
 		lAddr = (Elf_Addr)map.l_addr;
 		if (lAddr <= proc->execImage->elfHeader->e_entry) {
 			if (gVerbose > 1)
-				warnx("skipping \"%s\" as executable image",
-				    path);
+				// it's normal situation
+				warnx("skipping \"%s\" as executable image: %lx %lx",
+				    path, lAddr, proc->execImage->elfHeader->e_entry);
 			continue;
 		}
 		if (proc->abiPrefix && access(prefixedPath, R_OK) == 0)

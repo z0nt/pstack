@@ -39,7 +39,7 @@
 #include <string.h>   // for strcmp, strlen
 #include "elfinfo.h"  // for ElfObject
 
-static int	ehLogging = 0;
+static int	ehLogging = EH_PRINT_ALL;
 
 /*
  * table - sorted table of FDEs
@@ -70,6 +70,10 @@ ehFindFDE(const struct ehframehdr_item	*table, int count, int32_t key,
 	/* index of last item in table */
 	right = end;
 	left = 0;
+
+	if (ehLogging & EH_PRINT_FDE)
+		printf("ehFindFDE tbl: %p, count: %d, key: %x, start: %x, end: %x\n",
+		    table, count, key, table[0].rel_ip, table[end].rel_ip);
 
 	/* if there is only one element and it matches key */
 	if ((end == 0) && (table[0].rel_ip <= key)) {
@@ -151,7 +155,7 @@ ehLookupFrame(const struct ehframehdr *ehframehdr, const char* dataAddress,
 
 	if (ehFindFDE(&(ehframehdr->base), ehframehdr->n_fdecnt,
 	    rules->eh_rel_ip, &fde_offset) != 0)
-		return (-1);
+		return (-2);
 
 	cie_info = NULL;
 	fde_info = NULL;
@@ -237,7 +241,7 @@ clean:
 	if(fde_info != NULL)
 		free(fde_info);
 
-	return (-1);
+	return (-3);
 }
 
 void
@@ -261,8 +265,8 @@ int32_t
 ehGetRelativeIP(Elf_Addr ip, struct ElfObject *obj)
 {
 
-	return (ip - obj->baseAddr - 
-	    ((void*)obj->ehframeHeader - (void*)obj->fileData));
+	return (ip - obj->baseAddr -
+	    ((void*)obj->ehframeHeader - (void*)obj->fileData + obj->ehframe_phys_to_virt));
 }
 
 /*

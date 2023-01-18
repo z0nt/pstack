@@ -16,6 +16,7 @@
 /* Logging levels */
 
 enum {
+        EH_PRINT_NONE = 0,
         EH_PRINT_RULES = 1,
         EH_PRINT_BYTECODE = 2,
         EH_PRINT_FDE = 4,
@@ -31,9 +32,19 @@ struct ehframehdr_item {
 	uint32_t	offset;
 };
 
+
+/*
+ * This is combination of
+ *   version (uint8)            structure version (=1)
+ *   eh_frame_ptr_enc (uint8)   encoding of eh_frame_ptr
+ *   fde_count_enc (uint8)      encoding of fde_count
+ *   table_enc (uint8)          encoding of table entries
+ */
+#define	EH_FRAME_MAGIC	0x3b031b01
+
 struct ehframehdr {
-	uint32_t		n_enc;
-	uint32_t		n_ptr;
+	uint32_t		magic;
+	uint32_t		n_ptr; // pointer to eh_frame section
 	uint32_t		n_fdecnt;
 	struct ehframehdr_item	base;
 };
@@ -42,7 +53,7 @@ struct eh_record_fde {
 	int32_t		pc_begin;
 	uint32_t	pc_range;
 	uint8_t		augmentation_len;
-} fde_specific;
+};
 
 struct eh_record_common {
 	uint32_t	len;
