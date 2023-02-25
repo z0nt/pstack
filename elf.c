@@ -48,6 +48,7 @@
 #include <unistd.h>
 
 #include "elfinfo.h"
+#include "eh.h"
 
 static unsigned long	elf_hash(const char *name);
 
@@ -59,34 +60,41 @@ static unsigned long	elf_hash(const char *name);
 int
 elfLoadObject(const char *fileName, struct ElfObject **objp)
 {
-	int file, i;
-	const char *p;
-	struct ElfObject *obj;
-	struct stat sb;
-	const Elf_Ehdr *eHdr;
-	const Elf_Shdr **sHdrs, *shdr;
-	const Elf_Phdr **pHdrs;
-	char *data;
+	int			  file, i;
+	const char		 *p;
+	struct ElfObject	 *obj;
+	struct stat		  sb;
+	const Elf_Ehdr		 *eHdr;
+	const Elf_Shdr		**sHdrs, *shdr;
+	const Elf_Phdr		**pHdrs;
+	const struct ehframehdr	 *ehFrameHdr;
+	char			 *data;
 
 	if ((file = open(fileName, O_RDONLY)) == -1) {
 		warn("unable to open executable '%s'", fileName);
 		return (-1);
 	}
+
 	if (fstat(file, &sb) == -1) {
 		close(file);
 		warn("unable to stat executable '%s'", fileName);
 		return (-1);
 	}
+	
 	data = mmap(0, sb.st_size, PROT_READ, MAP_SHARED, file, 0);
 	close(file);
+	
 	if (data == MAP_FAILED) {
 		warn("unable to map executable '%s'", fileName);
 		return (-1);
 	}
+	
 	obj = calloc(1, sizeof(*obj));
 	obj->fileSize = sb.st_size;
 	obj->fileData = data;
 	obj->elfHeader = eHdr = (const Elf_Ehdr *)data;
+	obj->ehframeHeader = NULL;
+	
 	/* Validate the ELF header */
 	if (!IS_ELF(*obj->elfHeader) ||
 	    eHdr->e_ident[EI_CLASS] != ELF_TARG_CLASS ||
@@ -96,8 +104,11 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 		munmap(data, sb.st_size);
 		return (-1);
 	}
+
 	obj->programHeaders = pHdrs =
 	    malloc(sizeof(Elf_Phdr *) * (eHdr->e_phnum + 1));
+	obj->baseAddr = 0;
+	
 	for (p = data + eHdr->e_phoff, i = 0; i < eHdr->e_phnum; i++) {
 		pHdrs[i] = (const Elf_Phdr *)p;
 		switch (pHdrs[i]->p_type) {
@@ -107,9 +118,17 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 		case PT_DYNAMIC:
 			obj->dynamic = pHdrs[i];
 			break;
+		/*
+		 * Check program headers for load address. If it's ZERO, then
+		 * kernel will load object in ET_DYN_LOAD_ADDRESS
+		 */
+		case PT_LOAD:
+			if (pHdrs[i]->p_paddr == 0 && pHdrs[i]->p_vaddr == 0)
+				obj->baseAddr = ET_DYN_LOAD_ADDR;
 		}
 		p += eHdr->e_phentsize;
 	}
+	
 	pHdrs[i] = 0;
 	obj->sectionHeaders = sHdrs =
 	    malloc(sizeof(Elf_Shdr *) * (eHdr->e_shnum + 1));
@@ -117,6 +136,7 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 		sHdrs[i] = (const Elf_Shdr *)p;
 		p += eHdr->e_shentsize;
 	}
+	
 	sHdrs[i] = 0;
 	obj->sectionStrings = eHdr->e_shstrndx != SHN_UNDEF ?
 	    data + sHdrs[eHdr->e_shstrndx]->sh_offset : 0;
@@ -133,9 +153,28 @@ elfLoadObject(const char *fileName, struct ElfObject **objp)
 		else
 			obj->stabStrings = 0;
 	} else {
-	    obj->stabs = 0;
-	    obj->stabCount = 0;
+		obj->stabs = 0;
+		obj->stabCount = 0;
 	}
+
+	if (elfFindSectionByName(obj, ".eh_frame_hdr", &shdr) != -1) {
+		obj->ehframeHeader = ehFrameHdr = (struct ehframehdr*)
+		   (obj->fileData + shdr->sh_offset);
+		obj->ehframe_phys_to_virt= shdr->sh_addr - shdr->sh_offset;
+		if (ehFrameHdr->magic != EH_FRAME_MAGIC) {
+			warnx("Untypical case of eh_frame_hdr, skip parsing");
+			printf("type: %x ptr: %x fdecnt: %x\n", 
+			    ehFrameHdr->magic, ehFrameHdr->n_ptr,
+			    ehFrameHdr->n_fdecnt);
+		}
+	} else if(elfFindSectionByName(obj, ".zdebug_frame", &shdr) != -1) {
+		/*
+		 * Golang doesn't use error handling
+		 */
+		printf("Found compressed DWARF frame section. need support\n");
+
+	}
+
 	return (0);
 }
 
@@ -207,6 +246,7 @@ elfFindSymbolByAddress(struct ElfObject *obj, Elf_Addr addr,
 						*namep = symStrings +
 						    sym->st_name;
 						exact = 1;
+						goto out;
 					}
 				} else {
 					if ((*symp) == 0 || (*symp)->st_value <
@@ -219,6 +259,7 @@ elfFindSymbolByAddress(struct ElfObject *obj, Elf_Addr addr,
 			}
 		}
 	}
+out:
 	return (*symp ? 0 : -1);
 }
 

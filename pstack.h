@@ -7,6 +7,8 @@ struct StackFrame {
 	STAILQ_ENTRY(StackFrame) link;
 	Elf_Addr	ip;
 	Elf_Addr	bp;
+	Elf_Addr	sp;
+	char		broken;
 	int		argCount;
 	Elf_Word	args[1];
 };
@@ -57,14 +59,21 @@ struct thread_ops {
 };
 
 extern struct thread_ops thread_db_ops;
+extern int gThreadID;
 
 size_t	procReadMem(struct Process *proc, void *ptr, Elf_Addr remoteAddr,
 	    size_t size);
 int	procReadVar(struct Process *proc, struct ElfObject *obj,
 	    const char *name, int *value);
 struct Thread *procReadThread(struct Process *proc, Elf_Addr bp,
-	    Elf_Addr ip);
+	    Elf_Addr ip, Elf_Addr sp);
 size_t	procWriteMem(struct Process *proc, const void *ptr, Elf_Addr remoteAddr,
 	    size_t size);
+
+/* Use C++ ABI to demangle C++ functions */
+char* __cxa_demangle(const char* mangled_name,
+                     char* buf,
+                     size_t* n,
+                     int* status);
 
 #endif

@@ -49,6 +49,8 @@ struct ElfObject {
 	const struct stab *stabs;
 	const char 	*stabStrings;
 	int		 stabCount;
+	const struct ehframehdr	*ehframeHeader;
+	uint32_t	ehframe_phys_to_virt;
 };
 
 struct stab {
